@@ -1,9 +1,8 @@
 const path = require("path");
 const express = require("express");
-const db =
-  process.env.DATABASE_URL || process.env.POSTGRES_URL
-    ? require("./database-postgres")
-    : require("./database");
+const dbClient = String(process.env.DB_CLIENT || "sqlite").toLowerCase();
+const usePostgres = dbClient === "postgres";
+const db = usePostgres ? require("./database-postgres") : require("./database");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -49,13 +48,25 @@ app.get("/health", async (req, res) => {
     return res.status(500).json({
       status: "error",
       error: "Database initialization failed.",
-      detail: initError.message || String(initError)
+      detail: initError.message || String(initError),
+      config: {
+        db_client: dbClient,
+        is_vercel: IS_VERCEL,
+        read_only: READ_ONLY,
+        skip_db_init: SKIP_DB_INIT
+      }
     });
   }
 
   return res.json({
     status: "ok",
-    database: "ready"
+    database: "ready",
+    config: {
+      db_client: dbClient,
+      is_vercel: IS_VERCEL,
+      read_only: READ_ONLY,
+      skip_db_init: SKIP_DB_INIT
+    }
   });
 });
 
