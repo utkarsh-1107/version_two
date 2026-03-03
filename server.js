@@ -31,6 +31,22 @@ async function ensureDatabaseReady(res) {
   return false;
 }
 
+app.get("/health", async (req, res) => {
+  await initPromise;
+  if (initError) {
+    return res.status(500).json({
+      status: "error",
+      error: "Database initialization failed.",
+      detail: initError.message || String(initError)
+    });
+  }
+
+  return res.json({
+    status: "ok",
+    database: "ready"
+  });
+});
+
 app.get("/menu", async (req, res) => {
   try {
     if (!(await ensureDatabaseReady(res))) return;
