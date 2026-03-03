@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Food Order Management System V1</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <h1>Blazing Barbeque</h1>
+  </header>
+
+  <main class="app-main">
+    <section class="panel order-panel">
+      <h2 class="section-title">Add Order</h2>
+      <form id="order-form">
+        <div id="menu-container" class="menu-container"></div>
+
+        <div class="order-mode-block">
+          <h3>Order Type</h3>
+          <label>
+            <input type="radio" name="order_type" value="dine_in" checked />
+            Dine In
+          </label>
+          <label>
+            <input type="radio" name="order_type" value="parcel" />
+            Parcel
+          </label>
+        </div>
+
+        <div class="customer-block">
+          <h3>Customer Name (Optional)</h3>
+          <input id="customer-name" type="text" maxlength="80" placeholder="Enter customer name" />
+        </div>
+
+        <div class="payment-block">
+          <h3>Payment Mode</h3>
+          <label>
+            <input type="radio" name="payment_mode" value="cash" checked />
+            Cash
+          </label>
+          <label>
+            <input type="radio" name="payment_mode" value="upi" />
+            UPI
+          </label>
+        </div>
+
+        <div class="total-row">
+          <span>Order Total</span>
+          <strong id="order-total">Rs 0.00</strong>
+        </div>
+
+        <div class="form-actions">
+          <button type="button" id="clear-cart-btn" class="btn btn-secondary">Clear Cart</button>
+          <button type="submit" class="btn btn-primary">Create Order</button>
+        </div>
+      </form>
+      <p id="message" class="message"></p>
+    </section>
+
+    <section class="panel board-panel">
+      <h2 class="section-title">Live Order Board</h2>
+      <div class="board-tabs">
+        <button id="active-tab-btn" class="tab-btn active" type="button">Active Orders</button>
+        <button id="completed-tab-btn" class="tab-btn" type="button">Completed Today</button>
+      </div>
+
+      <div id="active-board-view" class="board-view">
+        <div class="board-columns">
+          <div class="board-column">
+            <h3>Queued</h3>
+            <div id="queued-list" class="order-list"></div>
+          </div>
+          <div class="board-column">
+            <h3>Preparing</h3>
+            <div id="preparing-list" class="order-list"></div>
+          </div>
+          <div class="board-column">
+            <h3>Ready</h3>
+            <div id="ready-list" class="order-list"></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="completed-board-view" class="board-view hidden">
+        <div class="board-column">
+          <h3>Completed</h3>
+          <div id="completed-list" class="order-list"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <section class="panel summary-panel">
+    <h2 class="section-title">Daily Summary</h2>
+    <div class="summary-grid">
+      <article class="summary-card">
+        <p>Total Orders</p>
+        <strong id="stat-orders">0</strong>
+      </article>
+      <article class="summary-card">
+        <p>Cash Total</p>
+        <strong id="stat-cash">Rs 0.00</strong>
+      </article>
+      <article class="summary-card">
+        <p>UPI Total</p>
+        <strong id="stat-upi">Rs 0.00</strong>
+      </article>
+      <article class="summary-card">
+        <p>Grand Total</p>
+        <strong id="stat-grand">Rs 0.00</strong>
+      </article>
+    </div>
+    <button id="reset-day-btn" class="btn btn-danger">Reset Current Day</button>
+  </section>
+
+  <script src="/script.js"></script>
+</body>
+</html>

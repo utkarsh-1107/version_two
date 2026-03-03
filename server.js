@@ -3,7 +3,9 @@ const express = require("express");
 const db = require("./database");
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
+const IS_VERCEL = Boolean(process.env.VERCEL);
+const READ_ONLY = ["1", "true"].includes(String(process.env.READ_ONLY || "").toLowerCase());
 const ADMIN_PIN = process.env.ADMIN_PIN || "1234";
 
 app.use(express.json());
@@ -39,6 +41,9 @@ app.get("/orders", async (req, res) => {
 
 app.post("/orders", async (req, res) => {
   try {
+    if (READ_ONLY) {
+      return res.status(405).json({ error: "Read-only mode is enabled." });
+    }
     const { items, payment_mode, order_type, customer_name } = req.body;
     const order = await db.createOrder({ items, payment_mode, order_type, customer_name });
     res.status(201).json(order);
@@ -49,6 +54,9 @@ app.post("/orders", async (req, res) => {
 
 app.put("/orders/:id/status", async (req, res) => {
   try {
+    if (READ_ONLY) {
+      return res.status(405).json({ error: "Read-only mode is enabled." });
+    }
     const orderId = Number(req.params.id);
     if (!Number.isInteger(orderId) || orderId <= 0) {
       return res.status(400).json({ error: "Invalid order id." });
@@ -68,6 +76,9 @@ app.put("/orders/:id/status", async (req, res) => {
 
 app.delete("/orders/:id", async (req, res) => {
   try {
+    if (READ_ONLY) {
+      return res.status(405).json({ error: "Read-only mode is enabled." });
+    }
     const orderId = Number(req.params.id);
     if (!Number.isInteger(orderId) || orderId <= 0) {
       return res.status(400).json({ error: "Invalid order id." });
@@ -100,6 +111,9 @@ app.get("/stats", async (req, res) => {
 
 app.post("/reset-day", async (req, res) => {
   try {
+    if (READ_ONLY) {
+      return res.status(405).json({ error: "Read-only mode is enabled." });
+    }
     const result = await db.resetDay();
     res.json({ message: "Day reset complete.", ...result });
   } catch (error) {
@@ -107,13 +121,19 @@ app.post("/reset-day", async (req, res) => {
   }
 });
 
-db.initDatabase()
-  .then(() => {
-    app.listen(PORT, () => {
-      console.log(`Food order system running at http://localhost:${PORT}`);
+const initPromise = db.initDatabase();
+
+if (!IS_VERCEL) {
+  initPromise
+    .then(() => {
+      app.listen(PORT, () => {
+        console.log(`Food order system running at http://localhost:${PORT}`);
+      });
+    })
+    .catch((error) => {
+      console.error("Failed to initialize database:", error);
+      process.exit(1);
     });
-  })
-  .catch((error) => {
-    console.error("Failed to initialize database:", error);
-    process.exit(1);
-  });
+}
+
+module.exports = app;

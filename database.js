@@ -4,12 +4,19 @@ const sqlite3 = require("sqlite3").verbose();
 
 const dataDir = path.join(__dirname, "data");
 const dbPath = path.join(dataDir, "food_orders.db");
+const READ_ONLY = ["1", "true"].includes(String(process.env.READ_ONLY || "").toLowerCase());
 
 if (!fs.existsSync(dataDir)) {
+  if (READ_ONLY) {
+    throw new Error("Read-only mode requires the data directory to exist.");
+  }
   fs.mkdirSync(dataDir, { recursive: true });
 }
 
-const db = new sqlite3.Database(dbPath);
+const db = new sqlite3.Database(
+  dbPath,
+  READ_ONLY ? sqlite3.OPEN_READONLY : sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE
+);
 const MAX_QTY_PER_ITEM = 10;
 
 function run(sql, params = []) {
@@ -227,6 +234,7 @@ async function migrateOrderItemsTable() {
 }
 
 async function initDatabase() {
+  if (READ_ONLY) return;
   await run(`
     CREATE TABLE IF NOT EXISTS categories (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
