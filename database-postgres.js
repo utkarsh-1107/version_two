@@ -154,6 +154,33 @@ function todayIN() {
   return toINDateTime().slice(0, 10);
 }
 
+function normalizeCreatedAt(value) {
+  if (!value) return value;
+
+  if (value instanceof Date) {
+    return toINDateTime(value);
+  }
+
+  const asString = String(value);
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(asString)) {
+    return asString;
+  }
+
+  const parsed = new Date(asString);
+  if (!Number.isNaN(parsed.getTime())) {
+    return toINDateTime(parsed);
+  }
+
+  return asString;
+}
+
+function normalizeOrderRow(order) {
+  return {
+    ...order,
+    created_at: normalizeCreatedAt(order.created_at)
+  };
+}
+
 async function initDatabase() {
   await run(`
     CREATE TABLE IF NOT EXISTS categories (
@@ -471,7 +498,7 @@ async function attachOrderItems(orderRows) {
   }
 
   return orderRows.map((order) => ({
-    ...order,
+    ...normalizeOrderRow(order),
     items: byOrderId.get(order.id) || []
   }));
 }

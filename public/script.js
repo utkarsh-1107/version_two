@@ -44,7 +44,33 @@ function formatCurrency(value) {
 }
 
 function formatTime(timestamp) {
-  return timestamp;
+  if (!timestamp) return "";
+
+  const raw = String(timestamp);
+  const directMatch = raw.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})/);
+  if (directMatch) {
+    return `${directMatch[1]} ${directMatch[2]}`;
+  }
+
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) {
+    return raw;
+  }
+
+  const formatted = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  }).format(parsed);
+
+  const [d, t] = formatted.split(", ");
+  const [day, month, year] = d.split("/");
+  return `${year}-${month}-${day} ${t}`;
 }
 
 function formatOrderType(orderType) {
