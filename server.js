@@ -1,0 +1,119 @@
+const path = require("path");
+const express = require("express");
+const db = require("./database");
+
+const app = express();
+const PORT = 3000;
+const ADMIN_PIN = process.env.ADMIN_PIN || "1234";
+
+app.use(express.json());
+app.use(express.static(path.join(__dirname, "public")));
+
+app.get("/menu", async (req, res) => {
+  try {
+    const menu = await db.getMenu();
+    res.json(menu);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch menu." });
+  }
+});
+
+app.get("/appetizers", async (req, res) => {
+  try {
+    const appetizers = await db.getAppetizers();
+    res.json(appetizers);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch appetizers." });
+  }
+});
+
+app.get("/orders", async (req, res) => {
+  try {
+    const includeCompleted = req.query.includeCompleted === "true";
+    const orders = await db.getOrders(includeCompleted);
+    res.json(orders);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch orders." });
+  }
+});
+
+app.post("/orders", async (req, res) => {
+  try {
+    const { items, payment_mode, order_type, customer_name } = req.body;
+    const order = await db.createOrder({ items, payment_mode, order_type, customer_name });
+    res.status(201).json(order);
+  } catch (error) {
+    res.status(400).json({ error: error.message || "Failed to create order." });
+  }
+});
+
+app.put("/orders/:id/status", async (req, res) => {
+  try {
+    const orderId = Number(req.params.id);
+    if (!Number.isInteger(orderId) || orderId <= 0) {
+      return res.status(400).json({ error: "Invalid order id." });
+    }
+
+    const { status } = req.body;
+    const updated = await db.updateOrderStatus(orderId, status);
+    if (!updated) {
+      return res.status(404).json({ error: "Order not found." });
+    }
+
+    return res.json(updated);
+  } catch (error) {
+    return res.status(400).json({ error: error.message || "Failed to update order status." });
+  }
+});
+
+app.delete("/orders/:id", async (req, res) => {
+  try {
+    const orderId = Number(req.params.id);
+    if (!Number.isInteger(orderId) || orderId <= 0) {
+      return res.status(400).json({ error: "Invalid order id." });
+    }
+
+    const providedPin = String(req.header("x-admin-pin") || req.body?.admin_pin || "").trim();
+    if (!providedPin || providedPin !== String(ADMIN_PIN).trim()) {
+      return res.status(403).json({ error: "Admin access denied." });
+    }
+
+    const deleted = await db.deleteOrder(orderId);
+    if (!deleted) {
+      return res.status(404).json({ error: "Order not found." });
+    }
+
+    return res.json({ message: "Order deleted." });
+  } catch (error) {
+    return res.status(400).json({ error: error.message || "Failed to delete order." });
+  }
+});
+
+app.get("/stats", async (req, res) => {
+  try {
+    const stats = await db.getStats();
+    res.json(stats);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch stats." });
+  }
+});
+
+app.post("/reset-day", async (req, res) => {
+  try {
+    const result = await db.resetDay();
+    res.json({ message: "Day reset complete.", ...result });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to reset day." });
+  }
+});
+
+db.initDatabase()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`Food order system running at http://localhost:${PORT}`);
+    });
+  })
+  .catch((error) => {
+    console.error("Failed to initialize database:", error);
+    process.exit(1);
+  });
