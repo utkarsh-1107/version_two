@@ -92,6 +92,51 @@ body {
   margin-bottom: 8px;
 }
 
+/* Modern POS Card Styling */
+.menu-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+  margin-bottom: 12px;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.menu-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.1);
+}
+
+.qty-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.qty-stepper button {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #e3e3e3;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #333333;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.qty-stepper button:hover {
+  background: #f1f5f9;
+}
+
+.qty-stepper .qty-value {
+  min-width: 22px;
+  text-align: center;
+  font-weight: 700;
+}
+
 .appetizer-row {
   display: flex;
   align-items: flex-start;
