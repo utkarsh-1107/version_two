@@ -1,6 +1,9 @@
 const path = require("path");
 const express = require("express");
-const db = require("./database");
+const db =
+  process.env.DATABASE_URL || process.env.POSTGRES_URL
+    ? require("./database-postgres")
+    : require("./database");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
