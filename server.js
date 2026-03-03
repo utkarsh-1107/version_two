@@ -8,6 +8,7 @@ const db =
 const app = express();
 const PORT = process.env.PORT || 3000;
 const IS_VERCEL = Boolean(process.env.VERCEL);
+const SKIP_DB_INIT = IS_VERCEL || ["1", "true"].includes(String(process.env.SKIP_DB_INIT || "").toLowerCase());
 const READ_ONLY = ["1", "true"].includes(String(process.env.READ_ONLY || "").toLowerCase());
 const ADMIN_PIN = process.env.ADMIN_PIN || "1234";
 
@@ -15,7 +16,7 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
 let initError = null;
-const initPromise = db.initDatabase().catch((error) => {
+const initPromise = (SKIP_DB_INIT ? Promise.resolve() : db.initDatabase()).catch((error) => {
   initError = error;
   console.error("Failed to initialize database:", error);
 });
@@ -23,6 +24,10 @@ const initPromise = db.initDatabase().catch((error) => {
 async function ensureDatabaseReady(res) {
   await initPromise;
   if (!initError) return true;
+  if (IS_VERCEL) {
+    console.error("Continuing despite DB init failure in serverless runtime.");
+    return true;
+  }
   res.status(500).json({ error: "Database initialization failed." });
   return false;
 }
