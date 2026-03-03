@@ -410,7 +410,7 @@ async function fetchOrderRows(includeCompleted = false) {
   let sql = `
     SELECT id, token_number, total_amount, payment_mode, order_type, customer_name, status, created_at
     FROM orders
-    WHERE DATE(created_at) = $1
+    WHERE order_date = $1
   `;
   if (!includeCompleted) {
     sql += " AND status != 'completed'";
@@ -481,7 +481,7 @@ async function getOrders(includeCompleted = false) {
   return attachOrderItems(rows);
 }
 
-async function createOrder({ items, payment_mode, order_type = "dine_in", customer_name = "" }) {
+async function createOrder({ items, payment_mode, order_type = "dine_in", customer_name = "" }, retriesLeft = 2) {
   if (!Array.isArray(items) || items.length === 0) {
     throw new Error("At least one item is required.");
   }
@@ -494,11 +494,13 @@ async function createOrder({ items, payment_mode, order_type = "dine_in", custom
 
   const cleanCustomerName = String(customer_name || "").trim().slice(0, 80);
 
+  const orderDate = todayIN();
+
   await run("BEGIN");
   try {
     const tokenRow = await get(
-      "SELECT COALESCE(MAX(token_number), 0) + 1 AS next_token FROM orders WHERE DATE(created_at) = $1",
-      [todayIN()]
+      "SELECT COALESCE(MAX(token_number), 0) + 1 AS next_token FROM orders WHERE order_date = $1",
+      [orderDate]
     );
     const tokenNumber = Number(tokenRow.next_token);
 
@@ -575,8 +577,7 @@ async function createOrder({ items, payment_mode, order_type = "dine_in", custom
       });
     }
 
-    const createdAt = new Date();
-    const orderDate = createdAt.toISOString().slice(0, 10);
+    const createdAt = toINDateTime();
     const insertOrder = await get(
       `
       INSERT INTO orders (token_number, total_amount, payment_mode, order_type, customer_name, status, created_at, order_date)
@@ -620,6 +621,14 @@ async function createOrder({ items, payment_mode, order_type = "dine_in", custom
     return createdOrder;
   } catch (error) {
     await run("ROLLBACK");
+    if (
+      retriesLeft > 0 &&
+      error &&
+      error.code === "23505" &&
+      error.constraint === "idx_orders_daily_token_unique"
+    ) {
+      return createOrder({ items, payment_mode, order_type, customer_name }, retriesLeft - 1);
+    }
     throw error;
   }
 }
@@ -648,7 +657,7 @@ async function getStats() {
       COALESCE(SUM(CASE WHEN payment_mode = 'upi' THEN total_amount END), 0) AS upi_total,
       COALESCE(SUM(total_amount), 0) AS grand_total
     FROM orders
-    WHERE DATE(created_at) = $1
+    WHERE order_date = $1
     `,
     [todayIN()]
   );
@@ -662,7 +671,7 @@ async function getStats() {
 }
 
 async function resetDay() {
-  const todaysOrders = await all("SELECT id FROM orders WHERE DATE(created_at) = $1", [todayIN()]);
+  const todaysOrders = await all("SELECT id FROM orders WHERE order_date = $1", [todayIN()]);
   if (todaysOrders.length === 0) return { deleted_orders: 0 };
 
   const ids = todaysOrders.map((o) => o.id);
