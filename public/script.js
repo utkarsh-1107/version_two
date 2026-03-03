@@ -13,6 +13,9 @@ const activeTabBtn = document.getElementById("active-tab-btn");
 const completedTabBtn = document.getElementById("completed-tab-btn");
 const activeBoardView = document.getElementById("active-board-view");
 const completedBoardView = document.getElementById("completed-board-view");
+const orderSearchInput = document.getElementById("order-search-input");
+const filterPayment = document.getElementById("filter-payment");
+const filterOrderType = document.getElementById("filter-order-type");
 
 const statOrders = document.getElementById("stat-orders");
 const statCash = document.getElementById("stat-cash");
@@ -20,6 +23,8 @@ const statUpi = document.getElementById("stat-upi");
 const statGrand = document.getElementById("stat-grand");
 const resetDayBtn = document.getElementById("reset-day-btn");
 const clearCartBtn = document.getElementById("clear-cart-btn");
+const dailyCloseReportBtn = document.getElementById("daily-close-report-btn");
+const dailyCloseReportOutput = document.getElementById("daily-close-report-output");
 const editOrderModal = document.getElementById("edit-order-modal");
 const editOrderItemsEl = document.getElementById("edit-order-items");
 const editMenuListEl = document.getElementById("edit-menu-list");
@@ -34,6 +39,11 @@ let currentBoardTab = "active";
 let cachedAdminPin = "";
 let currentEditOrderId = null;
 let editCart = [];
+let searchTerm = "";
+let paymentFilter = "";
+let orderTypeFilter = "";
+let refreshInProgress = false;
+let eventSource = null;
 
 const categoryOrder = [
   "Appetizers",
@@ -91,6 +101,26 @@ function showMessage(text, type = "success") {
   messageEl.classList.remove("success", "error");
   if (!text) return;
   messageEl.classList.add(type);
+}
+
+async function readJsonOrThrow(response, fallbackMessage) {
+  const raw = await response.text();
+  let payload = null;
+  try {
+    payload = raw ? JSON.parse(raw) : {};
+  } catch {
+    const trimmed = String(raw || "").trim();
+    if (trimmed.startsWith("<!DOCTYPE") || trimmed.startsWith("<html")) {
+      throw new Error(`Server returned HTML for ${response.url}. Restart server and hard refresh (Ctrl+F5).`);
+    }
+    throw new Error(trimmed || fallbackMessage);
+  }
+
+  if (!response.ok) {
+    throw new Error(payload.error || fallbackMessage);
+  }
+
+  return payload;
 }
 
 function getNextStatus(status) {
@@ -738,12 +768,25 @@ function renderColumn(targetEl, data) {
   });
 }
 
+function orderMatchesFilters(order) {
+  if (paymentFilter && order.payment_mode !== paymentFilter) return false;
+  if (orderTypeFilter && order.order_type !== orderTypeFilter) return false;
+  if (!searchTerm) return true;
+
+  const tokenText = String(order.token_number || "");
+  const customerText = String(order.customer_name || "");
+  const itemText = (order.items || []).map((item) => item.name).join(" ");
+  const haystack = `${tokenText} ${customerText} ${itemText}`.toLowerCase();
+  return haystack.includes(searchTerm);
+}
+
 function renderBoards() {
+  const visibleOrders = allOrders.filter(orderMatchesFilters);
   const byTokenAsc = (a, b) => Number(a.token_number) - Number(b.token_number);
-  const queued = allOrders.filter((order) => order.status === "queued").sort(byTokenAsc);
-  const preparing = allOrders.filter((order) => order.status === "preparing").sort(byTokenAsc);
-  const ready = allOrders.filter((order) => order.status === "ready").sort(byTokenAsc);
-  const completed = allOrders.filter((order) => order.status === "completed").sort(byTokenAsc);
+  const queued = visibleOrders.filter((order) => order.status === "queued").sort(byTokenAsc);
+  const preparing = visibleOrders.filter((order) => order.status === "preparing").sort(byTokenAsc);
+  const ready = visibleOrders.filter((order) => order.status === "ready").sort(byTokenAsc);
+  const completed = visibleOrders.filter((order) => order.status === "completed").sort(byTokenAsc);
 
   renderColumn(queuedList, queued);
   renderColumn(preparingList, preparing);
@@ -770,22 +813,19 @@ function setBoardTab(tab) {
 
 async function fetchMenu() {
   const response = await fetch("/menu");
-  if (!response.ok) throw new Error("Failed to fetch menu.");
-  menuItems = await response.json();
+  menuItems = await readJsonOrThrow(response, "Failed to fetch menu.");
   renderMenu();
 }
 
 async function fetchOrders() {
   const response = await fetch("/orders?includeCompleted=true");
-  if (!response.ok) throw new Error("Failed to fetch orders.");
-  allOrders = await response.json();
+  allOrders = await readJsonOrThrow(response, "Failed to fetch orders.");
   renderBoards();
 }
 
 async function fetchStats() {
   const response = await fetch("/stats");
-  if (!response.ok) throw new Error("Failed to fetch stats.");
-  const stats = await response.json();
+  const stats = await readJsonOrThrow(response, "Failed to fetch stats.");
   statOrders.textContent = String(stats.total_orders || 0);
   statCash.textContent = formatCurrency(stats.cash_total || 0);
   statUpi.textContent = formatCurrency(stats.upi_total || 0);
@@ -821,8 +861,7 @@ async function createOrder(event) {
     })
   });
 
-  const payload = await response.json();
-  if (!response.ok) throw new Error(payload.error || "Failed to create order.");
+  const payload = await readJsonOrThrow(response, "Failed to create order.");
 
   showMessage(`Order created successfully. Token #${payload.token_number}`, "success");
   clearForm();
@@ -836,8 +875,7 @@ async function updateStatus(orderId, status) {
     body: JSON.stringify({ status })
   });
 
-  const payload = await response.json();
-  if (!response.ok) throw new Error(payload.error || "Failed to update status.");
+  await readJsonOrThrow(response, "Failed to update status.");
   await Promise.all([fetchOrders(), fetchStats()]);
 }
 
@@ -846,8 +884,7 @@ async function resetDay() {
   if (!confirmed) return;
 
   const response = await fetch("/reset-day", { method: "POST" });
-  const payload = await response.json();
-  if (!response.ok) throw new Error(payload.error || "Failed to reset day.");
+  const payload = await readJsonOrThrow(response, "Failed to reset day.");
 
   showMessage(`Day reset complete. Deleted ${payload.deleted_orders} orders.`, "success");
   await Promise.all([fetchOrders(), fetchStats()]);
@@ -894,13 +931,89 @@ async function deleteOrder(orderId) {
 }
 
 async function refreshDashboard() {
-  await Promise.all([fetchOrders(), fetchStats()]);
+  if (refreshInProgress) return;
+  refreshInProgress = true;
+  try {
+    await Promise.all([fetchOrders(), fetchStats()]);
+  } finally {
+    refreshInProgress = false;
+  }
+}
+
+function formatReport(report) {
+  const status = report.by_status || {};
+  const orderType = report.by_order_type || {};
+  const topItems = report.top_items || [];
+  const lines = [
+    `Daily Close Report - ${report.date}`,
+    "",
+    `Total Orders: ${report.summary.total_orders}`,
+    `Cash Total: ${formatCurrency(report.summary.cash_total)}`,
+    `UPI Total: ${formatCurrency(report.summary.upi_total)}`,
+    `Grand Total: ${formatCurrency(report.summary.grand_total)}`,
+    "",
+    "By Status:",
+    `Queued: ${status.queued || 0}`,
+    `Preparing: ${status.preparing || 0}`,
+    `Ready: ${status.ready || 0}`,
+    `Completed: ${status.completed || 0}`,
+    "",
+    "By Order Type:",
+    `Dine In: ${orderType.dine_in || 0}`,
+    `Parcel: ${orderType.parcel || 0}`,
+    "",
+    "Top Items:"
+  ];
+
+  if (topItems.length === 0) {
+    lines.push("No item sales today.");
+  } else {
+    topItems.forEach((item, index) => {
+      lines.push(`${index + 1}. ${item.name} - ${item.quantity}`);
+    });
+  }
+
+  return lines.join("\n");
+}
+
+async function fetchDailyCloseReport() {
+  const response = await fetch("/reports/daily-close");
+  const payload = await readJsonOrThrow(response, "Failed to fetch daily close report.");
+  if (dailyCloseReportOutput) {
+    dailyCloseReportOutput.textContent = formatReport(payload);
+  }
+}
+
+function connectRealtimeEvents() {
+  if (eventSource) return;
+  eventSource = new EventSource("/events");
+  eventSource.addEventListener("orders_changed", async () => {
+    try {
+      await refreshDashboard();
+    } catch (_error) {
+      // polling fallback remains active
+    }
+  });
+  eventSource.onerror = () => {
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
+    setTimeout(connectRealtimeEvents, 3000);
+  };
+}
+
+async function verifyBackendHealth() {
+  const response = await fetch("/health", { cache: "no-store" });
+  await readJsonOrThrow(response, "Backend health check failed.");
 }
 
 async function init() {
   try {
+    await verifyBackendHealth();
     await fetchMenu();
     await refreshDashboard();
+    connectRealtimeEvents();
 
     orderForm.addEventListener("submit", async (event) => {
       try {
@@ -918,6 +1031,27 @@ async function init() {
       setBoardTab("completed");
     });
 
+    if (orderSearchInput) {
+      orderSearchInput.addEventListener("input", (event) => {
+        searchTerm = String(event.target.value || "").trim().toLowerCase();
+        renderBoards();
+      });
+    }
+
+    if (filterPayment) {
+      filterPayment.addEventListener("change", (event) => {
+        paymentFilter = String(event.target.value || "");
+        renderBoards();
+      });
+    }
+
+    if (filterOrderType) {
+      filterOrderType.addEventListener("change", (event) => {
+        orderTypeFilter = String(event.target.value || "");
+        renderBoards();
+      });
+    }
+
     resetDayBtn.addEventListener("click", async () => {
       try {
         await resetDay();
@@ -930,6 +1064,16 @@ async function init() {
       clearForm();
       showMessage("Cart cleared.", "success");
     });
+
+    if (dailyCloseReportBtn) {
+      dailyCloseReportBtn.addEventListener("click", async () => {
+        try {
+          await fetchDailyCloseReport();
+        } catch (error) {
+          showMessage(error.message, "error");
+        }
+      });
+    }
 
     queuedList.addEventListener("click", handleOrderCardAction);
     preparingList.addEventListener("click", handleOrderCardAction);

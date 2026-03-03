@@ -1,10 +1,14 @@
-  :root {
+:root {
   --primary: #D32F2F;
   --primary-dark: #B71C1C;
   --background: #FFFFFF;
   --text: #333333;
   --muted: #6A6A6A;
   --border: #F1B4B4;
+  --panel-bg: #FFFFFF;
+  --surface: #FFFFFF;
+  --input-bg: #FFFFFF;
+  --line: #E5E5E5;
 }
 
 * {
@@ -13,7 +17,7 @@
 
 body {
   margin: 0;
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: "Segoe UI", "Inter", Arial, Helvetica, sans-serif;
   background: var(--background);
   color: var(--text);
 }
@@ -22,6 +26,10 @@ body {
   background: var(--primary);
   color: #FFFFFF;
   padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
 }
 
 .app-header h1 {
@@ -38,10 +46,17 @@ body {
 }
 
 .panel {
-  background: #FFFFFF;
+  background: var(--panel-bg);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 16px;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.07);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .order-panel {
@@ -356,6 +371,28 @@ body {
   margin-bottom: 10px;
 }
 
+.board-filters {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.board-filters input,
+.board-filters select {
+  height: 36px;
+  border: 1px solid #D8D8D8;
+  border-radius: 8px;
+  padding: 0 10px;
+  background: var(--input-bg);
+  color: var(--text);
+}
+
+.board-filters input {
+  min-width: 230px;
+  flex: 1 1 260px;
+}
+
 .tab-btn {
   border: 1px solid #E4A7A7;
   background: #FFFFFF;
@@ -522,6 +559,25 @@ body {
   color: var(--primary-dark);
 }
 
+.report-tools {
+  margin-bottom: 10px;
+}
+
+.report-output {
+  margin: 0 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  min-height: 90px;
+  max-height: 260px;
+  overflow: auto;
+  background: var(--surface);
+  color: var(--text);
+  font-family: Consolas, "SFMono-Regular", "Courier New", monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
 .modal {
   position: fixed;
   inset: 0;
@@ -658,6 +714,7 @@ body {
   gap: 8px;
 }
 
+
 @media (max-width: 1024px) {
   .app-main {
     flex-direction: column;
@@ -679,5 +736,59 @@ body {
   .appetizer-controls {
     width: 100%;
     justify-content: flex-start;
+  }
+}
+
+@media (max-width: 768px) {
+  .app-header {
+    padding: 12px;
+    justify-content: center;
+  }
+
+  .app-header h1 {
+    font-size: 18px;
+    text-align: center;
+  }
+
+  .app-main {
+    padding: 10px;
+    gap: 10px;
+  }
+
+  .panel {
+    padding: 12px;
+  }
+
+  .board-filters input,
+  .board-filters select {
+    width: 100%;
+    min-width: 0;
+    flex: 1 1 100%;
+  }
+
+  .order-list {
+    max-height: 360px;
+    min-height: 240px;
+  }
+
+  .form-actions {
+    flex-direction: column;
+  }
+
+  .form-actions .btn {
+    width: 100%;
+  }
+
+  .edit-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .modal-actions {
+    width: 100%;
+  }
+
+  .modal-actions .btn {
+    flex: 1;
   }
 }

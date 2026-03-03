@@ -711,6 +711,66 @@ async function getStats() {
   };
 }
 
+async function getDailyCloseReport() {
+  const date = todayIN();
+  const stats = await getStats();
+
+  const statusRows = await all(
+    `
+    SELECT status, COUNT(*) AS count
+    FROM orders
+    WHERE order_date = $1
+    GROUP BY status
+    `,
+    [date]
+  );
+
+  const orderTypeRows = await all(
+    `
+    SELECT order_type, COUNT(*) AS count
+    FROM orders
+    WHERE order_date = $1
+    GROUP BY order_type
+    `,
+    [date]
+  );
+
+  const topItemRows = await all(
+    `
+    SELECT
+      COALESCE(mi.name, ag.name || ' - ' || av.portion_name) AS item_name,
+      SUM(oi.quantity) AS qty
+    FROM order_items oi
+    INNER JOIN orders o ON o.id = oi.order_id
+    LEFT JOIN menu_items mi ON mi.id = oi.menu_item_id
+    LEFT JOIN appetizer_variants av ON av.id = oi.appetizer_variant_id
+    LEFT JOIN appetizer_groups ag ON ag.id = av.group_id
+    WHERE o.order_date = $1
+    GROUP BY COALESCE(mi.name, ag.name || ' - ' || av.portion_name)
+    ORDER BY qty DESC, item_name ASC
+    LIMIT 10
+    `,
+    [date]
+  );
+
+  return {
+    date,
+    summary: stats,
+    by_status: statusRows.reduce((acc, row) => {
+      acc[row.status] = Number(row.count || 0);
+      return acc;
+    }, {}),
+    by_order_type: orderTypeRows.reduce((acc, row) => {
+      acc[row.order_type || "dine_in"] = Number(row.count || 0);
+      return acc;
+    }, {}),
+    top_items: topItemRows.map((row) => ({
+      name: row.item_name,
+      quantity: Number(row.qty || 0)
+    }))
+  };
+}
+
 async function resetDay() {
   const todaysOrders = await all("SELECT id FROM orders WHERE order_date = $1", [todayIN()]);
   if (todaysOrders.length === 0) return { deleted_orders: 0 };
@@ -858,6 +918,7 @@ module.exports = {
   editOrder,
   updateOrderStatus,
   getStats,
+  getDailyCloseReport,
   resetDay,
   deleteOrder,
   query

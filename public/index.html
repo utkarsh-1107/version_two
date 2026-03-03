@@ -8,7 +8,7 @@
 </head>
 <body>
   <header class="app-header">
-    <h1>Blazing Barbeque</h1>
+    <h1>BLAZING BARBECUE</h1>
   </header>
 
   <main class="app-main">
@@ -65,6 +65,19 @@
         <button id="active-tab-btn" class="tab-btn active" type="button">Active Orders</button>
         <button id="completed-tab-btn" class="tab-btn" type="button">Completed Today</button>
       </div>
+      <div class="board-filters">
+        <input id="order-search-input" type="text" placeholder="Search token, customer, item..." />
+        <select id="filter-payment">
+          <option value="">All Payments</option>
+          <option value="cash">Cash</option>
+          <option value="upi">UPI</option>
+        </select>
+        <select id="filter-order-type">
+          <option value="">All Types</option>
+          <option value="dine_in">Dine In</option>
+          <option value="parcel">Parcel</option>
+        </select>
+      </div>
 
       <div id="active-board-view" class="board-view">
         <div class="board-columns">
@@ -112,6 +125,10 @@
         <strong id="stat-grand">Rs 0.00</strong>
       </article>
     </div>
+    <div class="report-tools">
+      <button id="daily-close-report-btn" class="btn btn-primary" type="button">Generate Daily Close Report</button>
+    </div>
+    <pre id="daily-close-report-output" class="report-output"></pre>
     <button id="reset-day-btn" class="btn btn-danger">Reset Current Day</button>
   </section>
 
@@ -136,3 +153,4 @@
   <script src="/script.js"></script>
 </body>
 </html>
+

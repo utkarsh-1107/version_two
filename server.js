@@ -11,6 +11,7 @@ const IS_VERCEL = Boolean(process.env.VERCEL);
 const SKIP_DB_INIT = ["1", "true"].includes(String(process.env.SKIP_DB_INIT || "").toLowerCase());
 const READ_ONLY = ["1", "true"].includes(String(process.env.READ_ONLY || "").toLowerCase());
 const ADMIN_PIN = process.env.ADMIN_PIN || "1234";
+const sseClients = new Set();
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
@@ -31,6 +32,17 @@ async function ensureDatabaseReady(res) {
   return false;
 }
 
+function broadcastEvent(type, payload = {}) {
+  const message = `event: ${type}\ndata: ${JSON.stringify({ type, ...payload, ts: Date.now() })}\n\n`;
+  for (const client of sseClients) {
+    try {
+      client.write(message);
+    } catch (_error) {
+      sseClients.delete(client);
+    }
+  }
+}
+
 app.get("/health", async (req, res) => {
   await initPromise;
   if (initError) {
@@ -44,6 +56,21 @@ app.get("/health", async (req, res) => {
   return res.json({
     status: "ok",
     database: "ready"
+  });
+});
+
+app.get("/events", async (req, res) => {
+  if (!(await ensureDatabaseReady(res))) return;
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders?.();
+  res.write("retry: 3000\n\n");
+
+  sseClients.add(res);
+  req.on("close", () => {
+    sseClients.delete(res);
+    res.end();
   });
 });
 
@@ -110,6 +137,7 @@ app.post("/orders", async (req, res) => {
     }
     const { items, payment_mode, order_type, customer_name } = req.body;
     const order = await db.createOrder({ items, payment_mode, order_type, customer_name });
+    broadcastEvent("orders_changed", { action: "created", order_id: order.id });
     res.status(201).json(order);
   } catch (error) {
     res.status(400).json({ error: error.message || "Failed to create order." });
@@ -133,6 +161,7 @@ app.put("/orders/:id/status", async (req, res) => {
       return res.status(404).json({ error: "Order not found." });
     }
 
+    broadcastEvent("orders_changed", { action: "status_updated", order_id: orderId, status });
     return res.json(updated);
   } catch (error) {
     return res.status(400).json({ error: error.message || "Failed to update order status." });
@@ -157,6 +186,7 @@ app.put("/orders/:id/edit", async (req, res) => {
       return res.status(404).json({ error: "Order not found." });
     }
 
+    broadcastEvent("orders_changed", { action: "edited", order_id: orderId });
     return res.json(updated);
   } catch (error) {
     return res.status(400).json({ error: error.message || "Failed to edit order." });
@@ -184,6 +214,7 @@ app.delete("/orders/:id", async (req, res) => {
       return res.status(404).json({ error: "Order not found." });
     }
 
+    broadcastEvent("orders_changed", { action: "deleted", order_id: orderId });
     return res.json({ message: "Order deleted." });
   } catch (error) {
     return res.status(400).json({ error: error.message || "Failed to delete order." });
@@ -200,6 +231,16 @@ app.get("/stats", async (req, res) => {
   }
 });
 
+app.get("/reports/daily-close", async (req, res) => {
+  try {
+    if (!(await ensureDatabaseReady(res))) return;
+    const report = await db.getDailyCloseReport();
+    res.json(report);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch daily close report." });
+  }
+});
+
 app.post("/reset-day", async (req, res) => {
   try {
     if (!(await ensureDatabaseReady(res))) return;
@@ -207,6 +248,7 @@ app.post("/reset-day", async (req, res) => {
       return res.status(405).json({ error: "Read-only mode is enabled." });
     }
     const result = await db.resetDay();
+    broadcastEvent("orders_changed", { action: "reset_day" });
     res.json({ message: "Day reset complete.", ...result });
   } catch (error) {
     res.status(500).json({ error: "Failed to reset day." });
