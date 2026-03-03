@@ -1101,11 +1101,6 @@ async function verifyBackendHealth() {
 
 async function init() {
   try {
-    try {
-      await verifyBackendHealth();
-    } catch (_error) {
-      // Non-blocking: health probe can fail on stale/cached sessions.
-    }
     await fetchMenu();
     await refreshDashboard();
     connectRealtimeEvents();
