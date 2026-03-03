@@ -1,12 +1,19 @@
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 const { Pool } = require("pg");
 
 const useSSL =
-  ["1", "true"].includes(String(process.env.PGSSL || "").toLowerCase()) || Boolean(process.env.VERCEL);
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: useSSL ? { rejectUnauthorized: false } : false
-});
+  ["1", "true"].includes(String(process.env.PGSSL || "").toLowerCase()) ||
+  Boolean(process.env.VERCEL);
 
+const pool = new Pool({
+  host: "aws-1-us-east-1.pooler.supabase.com",
+  port: 6543,
+  user: "postgres.rkxfpfmweurzusfrzeqc",
+  password: "Qs_z*Fr!v2Rwc-2",
+  database: "postgres",
+  ssl: {
+    rejectUnauthorized: false,
+  },});
 const MAX_QTY_PER_ITEM = 10;
 
 async function query(sql, params = []) {
@@ -181,9 +188,15 @@ async function initDatabase() {
       order_type TEXT NOT NULL DEFAULT 'dine_in',
       customer_name TEXT,
       status TEXT NOT NULL CHECK(status IN ('queued', 'preparing', 'ready', 'completed')),
-      created_at TEXT NOT NULL
+      created_at TIMESTAMP NOT NULL,
+      order_date DATE NOT NULL
     )
   `);
+
+  // Backfill/migrate older schema that may be missing order_date.
+  await run("ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_date DATE");
+  await run("UPDATE orders SET order_date = DATE(created_at) WHERE order_date IS NULL");
+  await run("ALTER TABLE orders ALTER COLUMN order_date SET NOT NULL");
 
   await run(`
     CREATE TABLE IF NOT EXISTS order_items (
@@ -211,7 +224,7 @@ async function initDatabase() {
   await run("CREATE INDEX IF NOT EXISTS idx_order_items_variant_id ON order_items(appetizer_variant_id)");
   await run(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_daily_token_unique
-    ON orders(token_number, (DATE(created_at)))
+    ON orders (token_number, order_date)
   `);
 
   await run("BEGIN");
@@ -552,14 +565,15 @@ async function createOrder({ items, payment_mode, order_type = "dine_in", custom
       });
     }
 
-    const createdAt = toINDateTime();
+    const createdAt = new Date();
+    const orderDate = createdAt.toISOString().slice(0, 10);
     const insertOrder = await get(
       `
-      INSERT INTO orders (token_number, total_amount, payment_mode, order_type, customer_name, status, created_at)
+      INSERT INTO orders (token_number, total_amount, payment_mode, order_type, customer_name, status, created_at, order_date)
       VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING id
       `,
-      [tokenNumber, totalAmount, payment_mode, order_type, cleanCustomerName || null, "queued", createdAt]
+      [tokenNumber, totalAmount, payment_mode, order_type, cleanCustomerName || null, "queued", createdAt, orderDate]
     );
 
     for (const item of normalizedItems) {

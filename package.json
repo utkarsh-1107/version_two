@@ -7,7 +7,9 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "migrate:postgres": "node scripts/migrate-sqlite-to-postgres.js"
+    "migrate:postgres": "node scripts/migrate-sqlite-to-postgres.js",
+    "seed:generate": "node scripts/generate-seed-sql.js",
+    "seed:apply": "node scripts/apply-seed-sql.js"
   },
   "dependencies": {
     "body-parser": "^1.20.3",
