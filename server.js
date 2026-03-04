@@ -169,29 +169,52 @@ function renderDailyClosePdf(doc, report) {
   doc.text(`Parcel: ${orderType.parcel || 0}`, rightX + 10, y + 56);
 
   y += 110;
-  drawSectionTitle(doc, "Top Items", margin, y, contentWidth);
+  drawSectionTitle(doc, "Item Consumption (Plates)", margin, y, contentWidth);
   y += 36;
 
-  const topItems = Array.isArray(report.top_items) ? report.top_items : [];
-  if (topItems.length === 0) {
+  const consumedItems = Array.isArray(report.top_items) ? report.top_items : [];
+  if (consumedItems.length === 0) {
     doc.fillColor("#666666").font("Helvetica").fontSize(10).text("No item sales today.", margin, y);
   } else {
-    const maxRows = 12;
-    topItems.slice(0, maxRows).forEach((item, idx) => {
-      const rowY = y + idx * 22;
+    const most = consumedItems[0];
+    doc
+      .lineWidth(1)
+      .strokeColor("#E6A2A2")
+      .roundedRect(margin, y, contentWidth, 28, 6)
+      .stroke();
+    doc
+      .fillColor("#B71C1C")
+      .font("Helvetica-Bold")
+      .fontSize(10)
+      .text(`Most consumed today: ${most.name} (${most.quantity} plates)`, margin + 10, y + 8);
+    y += 40;
+
+    const rowHeight = 22;
+    consumedItems.forEach((item, idx) => {
+      if (y + rowHeight > doc.page.height - 48) {
+        doc.addPage();
+        y = margin;
+        drawSectionTitle(doc, "Item Consumption (Plates)", margin, y, contentWidth);
+        y += 36;
+      }
       doc
         .lineWidth(1)
         .strokeColor("#F1C9C9")
-        .roundedRect(margin, rowY, contentWidth, 20, 4)
+        .roundedRect(margin, y, contentWidth, 20, 4)
         .stroke();
       doc
         .fillColor("#333333")
         .font("Helvetica")
         .fontSize(10)
-        .text(`${idx + 1}. ${item.name || "-"}`, margin + 8, rowY + 5, { width: contentWidth - 70 });
+        .text(`${idx + 1}. ${item.name || "-"}`, margin + 8, y + 5, { width: contentWidth - 90 });
       doc
+        .fillColor("#111111")
         .font("Helvetica-Bold")
-        .text(String(item.quantity || 0), margin + contentWidth - 28, rowY + 5, { width: 20, align: "right" });
+        .text(`${item.quantity || 0} plates`, margin + contentWidth - 80, y + 5, {
+          width: 72,
+          align: "right"
+        });
+      y += rowHeight;
     });
   }
 

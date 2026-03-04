@@ -774,7 +774,6 @@ async function getDailyCloseReport() {
     WHERE o.order_date = $1
     GROUP BY COALESCE(mi.name, ag.name || ' - ' || av.portion_name)
     ORDER BY qty DESC, item_name ASC
-    LIMIT 10
     `,
     [date]
   );
