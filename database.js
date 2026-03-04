@@ -368,6 +368,10 @@ async function initDatabase() {
     for (const migration of legacyNameMigrations) {
       await run("UPDATE menu_items SET name = ? WHERE name = ?", [migration.newName, migration.oldName]);
     }
+    // Correct legacy appetizer price drift from older seed versions.
+    await run(
+      "UPDATE menu_items SET price = 120 WHERE name = 'Tandoori Chicken Breast - Mini' AND price = 129"
+    );
 
     for (const item of menuSeed) {
       const existing = await get(
