@@ -1,7 +1,21 @@
 const path = require("path");
 const express = require("express");
+const PDFDocument = require("pdfkit");
+
+const postgresUrl =
+  process.env.DATABASE_URL ||
+  process.env.POSTGRES_URL ||
+  process.env.POSTGRES_URL_NON_POOLING ||
+  process.env.SUPABASE_DB_URL ||
+  process.env.SUPABASE_DATABASE_URL ||
+  process.env.PG_CONNECTION_STRING ||
+  "";
+if (!process.env.DATABASE_URL && postgresUrl) {
+  process.env.DATABASE_URL = postgresUrl;
+}
+
 const dbClientEnv = String(process.env.DB_CLIENT || "").toLowerCase();
-const hasPostgresUrl = Boolean(process.env.DATABASE_URL || process.env.POSTGRES_URL);
+const hasPostgresUrl = Boolean(postgresUrl);
 const usePostgres = dbClientEnv ? dbClientEnv === "postgres" : hasPostgresUrl;
 const dbClient = usePostgres ? "postgres" : "sqlite";
 const db = usePostgres ? require("./database-postgres") : require("./database");
@@ -55,6 +69,137 @@ function invalidateRuntimeCache() {
   runtimeCache.menuExpiresAt = 0;
   runtimeCache.stats = null;
   runtimeCache.statsExpiresAt = 0;
+}
+
+function formatInr(value) {
+  return `Rs ${Number(value || 0).toFixed(2)}`;
+}
+
+function drawSectionTitle(doc, text, x, y, width) {
+  doc
+    .save()
+    .lineWidth(1)
+    .strokeColor("#D32F2F")
+    .roundedRect(x, y, width, 26, 6)
+    .stroke()
+    .fillColor("#D32F2F")
+    .font("Helvetica-Bold")
+    .fontSize(11)
+    .text(String(text || "").toUpperCase(), x + 10, y + 7, { width: width - 20, align: "left" })
+    .restore();
+}
+
+function renderDailyClosePdf(doc, report) {
+  const pageWidth = doc.page.width;
+  const margin = 40;
+  const contentWidth = pageWidth - margin * 2;
+  let y = margin;
+
+  doc.rect(0, 0, pageWidth, 72).fill("#D32F2F");
+  doc
+    .fillColor("#FFFFFF")
+    .font("Helvetica-Bold")
+    .fontSize(22)
+    .text("BLAZING BARBECUE", margin, 24);
+  doc
+    .font("Helvetica")
+    .fontSize(10)
+    .text(`Daily Close Report - ${report.date}`, margin, 50);
+
+  y = 92;
+
+  drawSectionTitle(doc, "Summary", margin, y, contentWidth);
+  y += 36;
+
+  const summary = [
+    ["Total Orders", String(report.summary?.total_orders || 0)],
+    ["Cash Total", formatInr(report.summary?.cash_total || 0)],
+    ["UPI Total", formatInr(report.summary?.upi_total || 0)],
+    ["Grand Total", formatInr(report.summary?.grand_total || 0)]
+  ];
+
+  const cardGap = 10;
+  const cardWidth = (contentWidth - cardGap) / 2;
+  const cardHeight = 54;
+  summary.forEach((row, index) => {
+    const col = index % 2;
+    const rowIndex = Math.floor(index / 2);
+    const x = margin + col * (cardWidth + cardGap);
+    const cardY = y + rowIndex * (cardHeight + cardGap);
+
+    doc
+      .lineWidth(1)
+      .strokeColor("#E6A2A2")
+      .roundedRect(x, cardY, cardWidth, cardHeight, 6)
+      .stroke();
+    doc.fillColor("#444444").font("Helvetica").fontSize(10).text(row[0], x + 10, cardY + 10);
+    doc.fillColor("#111111").font("Helvetica-Bold").fontSize(14).text(row[1], x + 10, cardY + 26);
+  });
+
+  y += cardHeight * 2 + cardGap + 8;
+
+  const status = report.by_status || {};
+  const orderType = report.by_order_type || {};
+  drawSectionTitle(doc, "Breakdown", margin, y, contentWidth);
+  y += 36;
+
+  const leftWidth = (contentWidth - 16) / 2;
+  const rightX = margin + leftWidth + 16;
+
+  doc
+    .lineWidth(1)
+    .strokeColor("#E6A2A2")
+    .roundedRect(margin, y, leftWidth, 92, 6)
+    .stroke();
+  doc.fillColor("#D32F2F").font("Helvetica-Bold").fontSize(11).text("By Status", margin + 10, y + 10);
+  doc.fillColor("#333333").font("Helvetica").fontSize(10);
+  doc.text(`Queued: ${status.queued || 0}`, margin + 10, y + 30);
+  doc.text(`Preparing: ${status.preparing || 0}`, margin + 10, y + 46);
+  doc.text(`Ready: ${status.ready || 0}`, margin + 10, y + 62);
+  doc.text(`Completed: ${status.completed || 0}`, margin + 10, y + 78);
+
+  doc
+    .lineWidth(1)
+    .strokeColor("#E6A2A2")
+    .roundedRect(rightX, y, leftWidth, 92, 6)
+    .stroke();
+  doc.fillColor("#D32F2F").font("Helvetica-Bold").fontSize(11).text("By Order Type", rightX + 10, y + 10);
+  doc.fillColor("#333333").font("Helvetica").fontSize(10);
+  doc.text(`Dine In: ${orderType.dine_in || 0}`, rightX + 10, y + 36);
+  doc.text(`Parcel: ${orderType.parcel || 0}`, rightX + 10, y + 56);
+
+  y += 110;
+  drawSectionTitle(doc, "Top Items", margin, y, contentWidth);
+  y += 36;
+
+  const topItems = Array.isArray(report.top_items) ? report.top_items : [];
+  if (topItems.length === 0) {
+    doc.fillColor("#666666").font("Helvetica").fontSize(10).text("No item sales today.", margin, y);
+  } else {
+    const maxRows = 12;
+    topItems.slice(0, maxRows).forEach((item, idx) => {
+      const rowY = y + idx * 22;
+      doc
+        .lineWidth(1)
+        .strokeColor("#F1C9C9")
+        .roundedRect(margin, rowY, contentWidth, 20, 4)
+        .stroke();
+      doc
+        .fillColor("#333333")
+        .font("Helvetica")
+        .fontSize(10)
+        .text(`${idx + 1}. ${item.name || "-"}`, margin + 8, rowY + 5, { width: contentWidth - 70 });
+      doc
+        .font("Helvetica-Bold")
+        .text(String(item.quantity || 0), margin + contentWidth - 28, rowY + 5, { width: 20, align: "right" });
+    });
+  }
+
+  doc
+    .fillColor("#666666")
+    .font("Helvetica")
+    .fontSize(9)
+    .text(`Generated: ${new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}`, margin, doc.page.height - 30);
 }
 
 app.get("/health", async (req, res) => {
@@ -294,6 +439,30 @@ app.get("/reports/daily-close", async (req, res) => {
     res.json(report);
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch daily close report." });
+  }
+});
+
+app.get("/reports/daily-close/pdf", async (req, res) => {
+  try {
+    if (!(await ensureDatabaseReady(res))) return;
+    const report = await db.getDailyCloseReport();
+    const filename = `daily-close-${report.date || "report"}.pdf`;
+    const doc = new PDFDocument({
+      size: "A4",
+      margin: 0,
+      info: {
+        Title: "Daily Close Report",
+        Author: "Blazing Barbecue POS"
+      }
+    });
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename=\"${filename}\"`);
+    doc.pipe(res);
+    renderDailyClosePdf(doc, report);
+    doc.end();
+  } catch (error) {
+    res.status(500).json({ error: "Failed to generate daily close PDF." });
   }
 });
 

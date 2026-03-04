@@ -1156,10 +1156,13 @@ function formatReport(report) {
 }
 
 async function fetchDailyCloseReport() {
-  const response = await fetch("/reports/daily-close");
-  const payload = await readJsonOrThrow(response, "Failed to fetch daily close report.");
+  const url = "/reports/daily-close/pdf";
+  const popup = window.open(url, "_blank", "noopener,noreferrer");
+  if (!popup) {
+    throw new Error("Popup blocked. Please allow popups to open the PDF report.");
+  }
   if (dailyCloseReportOutput) {
-    dailyCloseReportOutput.textContent = formatReport(payload);
+    dailyCloseReportOutput.textContent = "Opened PDF report in a new tab.";
   }
 }
 
