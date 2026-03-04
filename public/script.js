@@ -27,7 +27,6 @@ const statGrand = document.getElementById("stat-grand");
 const resetDayBtn = document.getElementById("reset-day-btn");
 const clearCartBtn = document.getElementById("clear-cart-btn");
 const dailyCloseReportBtn = document.getElementById("daily-close-report-btn");
-const dailyCloseReportOutput = document.getElementById("daily-close-report-output");
 const invoiceOrderIdInput = document.getElementById("invoice-order-id");
 const printOrderInvoiceBtn = document.getElementById("print-order-invoice-btn");
 const printCompletedInvoicesBtn = document.getElementById("print-completed-invoices-btn");
@@ -1153,51 +1152,9 @@ async function refreshDashboard() {
   }
 }
 
-function formatReport(report) {
-  const status = report.by_status || {};
-  const orderType = report.by_order_type || {};
-  const topItems = report.top_items || [];
-  const lines = [
-    `Daily Close Report - ${report.date}`,
-    "",
-    `Total Orders: ${report.summary.total_orders}`,
-    `Cash Total: ${formatCurrency(report.summary.cash_total)}`,
-    `UPI Total: ${formatCurrency(report.summary.upi_total)}`,
-    `Grand Total: ${formatCurrency(report.summary.grand_total)}`,
-    "",
-    "By Status:",
-    `Queued: ${status.queued || 0}`,
-    `Preparing: ${status.preparing || 0}`,
-    `Ready: ${status.ready || 0}`,
-    `Completed: ${status.completed || 0}`,
-    "",
-    "By Order Type:",
-    `Dine In: ${orderType.dine_in || 0}`,
-    `Parcel: ${orderType.parcel || 0}`,
-    "",
-    "Top Items:"
-  ];
-
-  if (topItems.length === 0) {
-    lines.push("No item sales today.");
-  } else {
-    topItems.forEach((item, index) => {
-      lines.push(`${index + 1}. ${item.name} - ${item.quantity}`);
-    });
-  }
-
-  return lines.join("\n");
-}
-
 async function fetchDailyCloseReport() {
   const url = "/reports/daily-close/pdf";
-  const popup = window.open(url, "_blank", "noopener,noreferrer");
-  if (!popup) {
-    throw new Error("Popup blocked. Please allow popups to open the PDF report.");
-  }
-  if (dailyCloseReportOutput) {
-    dailyCloseReportOutput.textContent = "Opened PDF report in a new tab.";
-  }
+  openUrlInNewTabOnly(url);
 }
 
 function openUrlInNewTabOnly(url) {

@@ -648,21 +648,6 @@ body {
   outline: none;
 }
 
-.report-output {
-  margin: 0 0 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 10px;
-  min-height: 90px;
-  max-height: 260px;
-  overflow: auto;
-  background: var(--surface);
-  color: var(--text);
-  font-family: Consolas, "SFMono-Regular", "Courier New", monospace;
-  font-size: 12px;
-  white-space: pre-wrap;
-}
-
 .modal {
   position: fixed;
   inset: 0;
