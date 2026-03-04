@@ -28,6 +28,9 @@ const resetDayBtn = document.getElementById("reset-day-btn");
 const clearCartBtn = document.getElementById("clear-cart-btn");
 const dailyCloseReportBtn = document.getElementById("daily-close-report-btn");
 const dailyCloseReportOutput = document.getElementById("daily-close-report-output");
+const invoiceOrderIdInput = document.getElementById("invoice-order-id");
+const printOrderInvoiceBtn = document.getElementById("print-order-invoice-btn");
+const printCompletedInvoicesBtn = document.getElementById("print-completed-invoices-btn");
 const editOrderModal = document.getElementById("edit-order-modal");
 const editOrderItemsEl = document.getElementById("edit-order-items");
 const editMenuListEl = document.getElementById("edit-menu-list");
@@ -541,6 +544,14 @@ function renderOrderCard(order) {
   deleteBtn.dataset.orderId = String(order.id);
   actions.appendChild(deleteBtn);
 
+  const printBtn = document.createElement("button");
+  printBtn.className = "btn btn-secondary";
+  printBtn.type = "button";
+  printBtn.textContent = "Print Invoice";
+  printBtn.dataset.action = "print-invoice";
+  printBtn.dataset.orderId = String(order.id);
+  actions.appendChild(printBtn);
+
   card.appendChild(actions);
 
   card.addEventListener("touchstart", (event) => {
@@ -622,6 +633,10 @@ async function handleOrderCardAction(event) {
     }
     if (action === "delete") {
       await deleteOrder(orderId);
+      return;
+    }
+    if (action === "print-invoice") {
+      openInvoicePrint(orderId);
       return;
     }
     if (action === "status") {
@@ -1185,6 +1200,24 @@ async function fetchDailyCloseReport() {
   }
 }
 
+function openInvoicePrint(orderId) {
+  const id = Number(orderId);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new Error("Invalid Order ID.");
+  }
+  const popup = window.open(`/invoices/${id}/print`, "_blank", "noopener,noreferrer");
+  if (!popup) {
+    throw new Error("Popup blocked. Please allow popups to open invoice.");
+  }
+}
+
+function openCompletedInvoicesPrint() {
+  const popup = window.open("/invoices/completed/today/print", "_blank", "noopener,noreferrer");
+  if (!popup) {
+    throw new Error("Popup blocked. Please allow popups to open invoices.");
+  }
+}
+
 function connectRealtimeEvents() {
   if (eventSource) return;
   eventSource = new EventSource("/events");
@@ -1280,6 +1313,27 @@ async function init() {
       dailyCloseReportBtn.addEventListener("click", async () => {
         try {
           await fetchDailyCloseReport();
+        } catch (error) {
+          showMessage(error.message, "error");
+        }
+      });
+    }
+
+    if (printOrderInvoiceBtn) {
+      printOrderInvoiceBtn.addEventListener("click", () => {
+        try {
+          const orderId = Number(invoiceOrderIdInput?.value);
+          openInvoicePrint(orderId);
+        } catch (error) {
+          showMessage(error.message, "error");
+        }
+      });
+    }
+
+    if (printCompletedInvoicesBtn) {
+      printCompletedInvoicesBtn.addEventListener("click", () => {
+        try {
+          openCompletedInvoicesPrint();
         } catch (error) {
           showMessage(error.message, "error");
         }

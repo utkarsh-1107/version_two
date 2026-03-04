@@ -225,6 +225,230 @@ function renderDailyClosePdf(doc, report) {
     .text(`Generated: ${new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}`, margin, doc.page.height - 30);
 }
 
+function escapeHtml(text) {
+  return String(text ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function formatInvoiceDate(raw) {
+  if (!raw) return "";
+  const parsed = new Date(String(raw).replace(" ", "T"));
+  if (Number.isNaN(parsed.getTime())) return String(raw);
+  return new Intl.DateTimeFormat("en-IN", {
+    timeZone: "Asia/Kolkata",
+    dateStyle: "medium",
+    timeStyle: "short",
+    hour12: true
+  }).format(parsed);
+}
+
+function renderInvoiceHtml(order, { includePrintButton = true } = {}) {
+  const items = Array.isArray(order.items) ? order.items : [];
+  const rows = items
+    .map((item) => {
+      const quantity = Number(item.quantity || 0);
+      const lineTotal = Number(item.line_total || 0);
+      const unitPrice = quantity > 0 ? lineTotal / quantity : 0;
+      return `
+        <tr>
+          <td>${escapeHtml(item.name || "-")}</td>
+          <td class="right">${formatInr(unitPrice)}</td>
+          <td class="center">${quantity}</td>
+          <td class="right">${formatInr(lineTotal)}</td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  const customerName = order.customer_name ? escapeHtml(order.customer_name) : "Walk-in";
+  const customerAddress = order.customer_address ? escapeHtml(order.customer_address) : "Not provided";
+  const orderNotes = order.order_notes ? escapeHtml(order.order_notes) : "Not provided";
+
+  return `
+    <section class="invoice-sheet">
+      <header class="invoice-header">
+        <div>
+          <h1>BLAZING BARBECUE</h1>
+          <p class="subtitle">ORDER INVOICE</p>
+        </div>
+        <div class="meta">
+          <p><strong>Order ID:</strong> #${order.id}</p>
+          <p><strong>Token:</strong> #${order.token_number}</p>
+          <p><strong>Date:</strong> ${escapeHtml(formatInvoiceDate(order.created_at))}</p>
+        </div>
+      </header>
+
+      <div class="invoice-grid">
+        <div>
+          <p><strong>Customer:</strong> ${customerName}</p>
+          <p><strong>Address:</strong> ${customerAddress}</p>
+          <p><strong>Notes:</strong> ${orderNotes}</p>
+        </div>
+        <div>
+          <p><strong>Status:</strong> ${escapeHtml(String(order.status || "").toUpperCase())}</p>
+          <p><strong>Order Type:</strong> ${escapeHtml(order.order_type === "parcel" ? "Parcel" : "Dine In")}</p>
+          <p><strong>Payment:</strong> ${escapeHtml(String(order.payment_mode || "").toUpperCase())}</p>
+        </div>
+      </div>
+
+      <table class="invoice-table">
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th class="right">Price</th>
+            <th class="center">Qty</th>
+            <th class="right">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows || '<tr><td colspan="4" class="center muted">No items</td></tr>'}
+        </tbody>
+      </table>
+
+      <div class="invoice-total">
+        <span>Grand Total</span>
+        <strong>${formatInr(order.total_amount || 0)}</strong>
+      </div>
+
+      <footer class="invoice-footer">
+        <p>Thank you for ordering with Blazing Barbecue.</p>
+      </footer>
+
+      ${includePrintButton ? '<button class="print-btn" onclick="window.print()">Print Invoice</button>' : ""}
+    </section>
+  `;
+}
+
+function renderInvoiceDocument(content, { title = "Invoice", autoPrint = false } = {}) {
+  return `
+    <!doctype html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>${escapeHtml(title)}</title>
+      <style>
+        :root {
+          --primary: #D32F2F;
+          --primary-dark: #B71C1C;
+          --line: #EBC3C3;
+          --text: #1F2937;
+          --muted: #6B7280;
+        }
+        * { box-sizing: border-box; }
+        body {
+          margin: 0;
+          font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+          background: #f7f7f7;
+          color: var(--text);
+          padding: 20px;
+        }
+        .invoice-sheet {
+          max-width: 840px;
+          margin: 0 auto 20px;
+          background: #fff;
+          border: 1px solid var(--line);
+          border-radius: 10px;
+          overflow: hidden;
+          box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+        }
+        .invoice-header {
+          background: var(--primary);
+          color: #fff;
+          padding: 18px 20px;
+          display: flex;
+          justify-content: space-between;
+          gap: 12px;
+        }
+        .invoice-header h1 {
+          margin: 0;
+          font-size: 24px;
+          letter-spacing: 0.04em;
+        }
+        .subtitle {
+          margin: 6px 0 0;
+          font-weight: 700;
+          letter-spacing: 0.06em;
+        }
+        .meta p { margin: 3px 0; font-size: 13px; text-align: right; }
+        .invoice-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 12px;
+          padding: 14px 20px 8px;
+        }
+        .invoice-grid p { margin: 4px 0; font-size: 13px; }
+        .invoice-table {
+          width: calc(100% - 40px);
+          margin: 8px 20px;
+          border-collapse: collapse;
+          font-size: 13px;
+        }
+        .invoice-table th {
+          background: var(--primary-dark);
+          color: #fff;
+          text-align: left;
+          padding: 10px 8px;
+        }
+        .invoice-table td {
+          border-bottom: 1px solid #efefef;
+          padding: 10px 8px;
+          vertical-align: top;
+        }
+        .right { text-align: right; }
+        .center { text-align: center; }
+        .muted { color: var(--muted); }
+        .invoice-total {
+          margin: 12px 20px 6px;
+          padding: 12px 14px;
+          border: 1px solid var(--line);
+          border-radius: 8px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          background: #fff7f7;
+        }
+        .invoice-total span { font-weight: 700; text-transform: uppercase; font-size: 13px; }
+        .invoice-total strong { color: var(--primary-dark); font-size: 20px; }
+        .invoice-footer { padding: 0 20px 16px; color: var(--muted); font-size: 12px; }
+        .print-btn {
+          margin: 0 20px 20px;
+          border: none;
+          background: var(--primary);
+          color: #fff;
+          padding: 10px 14px;
+          border-radius: 8px;
+          font-weight: 700;
+          cursor: pointer;
+        }
+        .print-btn:hover { background: var(--primary-dark); }
+        @media (max-width: 640px) {
+          body { padding: 10px; }
+          .invoice-grid { grid-template-columns: 1fr; }
+          .meta p { text-align: left; }
+          .invoice-header { flex-direction: column; }
+        }
+        @media print {
+          body { background: #fff; padding: 0; }
+          .invoice-sheet { box-shadow: none; border-radius: 0; margin: 0 0 10mm; border: 1px solid #e5e7eb; }
+          .print-btn { display: none; }
+          .invoice-sheet { page-break-after: always; }
+          .invoice-sheet:last-child { page-break-after: auto; }
+        }
+      </style>
+    </head>
+    <body>
+      ${content}
+      ${autoPrint ? "<script>window.addEventListener('load', () => window.print());</script>" : ""}
+    </body>
+    </html>
+  `;
+}
+
 app.get("/health", async (req, res) => {
   await initPromise;
   if (initError) {
@@ -486,6 +710,50 @@ app.get("/reports/daily-close/pdf", async (req, res) => {
     doc.end();
   } catch (error) {
     res.status(500).json({ error: "Failed to generate daily close PDF." });
+  }
+});
+
+app.get("/invoices/:id/print", async (req, res) => {
+  try {
+    if (!(await ensureDatabaseReady(res))) return;
+    const orderId = Number(req.params.id);
+    if (!Number.isInteger(orderId) || orderId <= 0) {
+      return res.status(400).send("Invalid order id.");
+    }
+    const order = await db.getOrderById(orderId);
+    if (!order) {
+      return res.status(404).send("Order not found.");
+    }
+    const autoPrint = String(req.query.autoprint || "").toLowerCase() === "true";
+    const html = renderInvoiceDocument(renderInvoiceHtml(order), {
+      title: `Invoice #${order.id}`,
+      autoPrint
+    });
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(html);
+  } catch (error) {
+    res.status(500).send("Failed to render invoice.");
+  }
+});
+
+app.get("/invoices/completed/today/print", async (req, res) => {
+  try {
+    if (!(await ensureDatabaseReady(res))) return;
+    const orders = await db.getOrders(true);
+    const completed = orders.filter((order) => order.status === "completed");
+    if (completed.length === 0) {
+      return res.status(404).send("No completed orders found for today.");
+    }
+    const autoPrint = String(req.query.autoprint || "").toLowerCase() === "true";
+    const content = completed.map((order) => renderInvoiceHtml(order, { includePrintButton: false })).join("\n");
+    const html = renderInvoiceDocument(content, {
+      title: "Completed Invoices - Today",
+      autoPrint
+    });
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(html);
+  } catch (error) {
+    res.status(500).send("Failed to render completed invoices.");
   }
 });
 
