@@ -1205,16 +1205,18 @@ function openInvoicePrint(orderId) {
   if (!Number.isInteger(id) || id <= 0) {
     throw new Error("Invalid Order ID.");
   }
-  const popup = window.open(`/invoices/${id}/print`, "_blank", "noopener,noreferrer");
+  const url = `/invoices/${id}/print`;
+  const popup = window.open(url, "_blank", "noopener,noreferrer");
   if (!popup) {
-    throw new Error("Popup blocked. Please allow popups to open invoice.");
+    window.location.href = url;
   }
 }
 
 function openCompletedInvoicesPrint() {
-  const popup = window.open("/invoices/completed/today/print", "_blank", "noopener,noreferrer");
+  const url = "/invoices/completed/today/print";
+  const popup = window.open(url, "_blank", "noopener,noreferrer");
   if (!popup) {
-    throw new Error("Popup blocked. Please allow popups to open invoices.");
+    window.location.href = url;
   }
 }
 
