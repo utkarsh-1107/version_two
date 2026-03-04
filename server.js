@@ -1,7 +1,9 @@
 const path = require("path");
 const express = require("express");
-const dbClient = String(process.env.DB_CLIENT || "sqlite").toLowerCase();
-const usePostgres = dbClient === "postgres";
+const dbClientEnv = String(process.env.DB_CLIENT || "").toLowerCase();
+const hasPostgresUrl = Boolean(process.env.DATABASE_URL || process.env.POSTGRES_URL);
+const usePostgres = dbClientEnv ? dbClientEnv === "postgres" : hasPostgresUrl;
+const dbClient = usePostgres ? "postgres" : "sqlite";
 const db = usePostgres ? require("./database-postgres") : require("./database");
 
 const app = express();
