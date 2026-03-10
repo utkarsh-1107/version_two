@@ -162,9 +162,12 @@ function normalizeCreatedAt(value) {
   }
 
   const asString = String(value);
+  // For TIMESTAMP WITHOUT TIME ZONE values, keep DB text as-is.
+  // We store created_at in IST business time.
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(asString)) {
+    return asString;
+  }
 
-  // Postgres can return timestamp strings in server-local timezone context.
-  // Always parse and render explicitly in Asia/Kolkata for UI consistency.
   const parsed = new Date(asString);
   if (!Number.isNaN(parsed.getTime())) {
     return toINDateTime(parsed);
@@ -555,10 +558,14 @@ async function createOrder(
   const cleanCustomerAddress = String(customer_address || "").trim().slice(0, 240);
   const cleanOrderNotes = String(order_notes || "").trim().slice(0, 500);
 
-  const orderDate = todayIN();
-
   await run("BEGIN");
   try {
+    const nowInIN = await get(
+      "SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata') AS created_at_in, (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::date AS order_date_in"
+    );
+    const orderDate = String(nowInIN?.order_date_in || todayIN()).slice(0, 10);
+    const createdAt = String(nowInIN?.created_at_in || toINDateTime()).replace("T", " ").slice(0, 19);
+
     const tokenRow = await get(
       "SELECT COALESCE(MAX(token_number), 0) + 1 AS next_token FROM orders WHERE order_date = $1",
       [orderDate]
@@ -638,7 +645,6 @@ async function createOrder(
       });
     }
 
-    const createdAt = toINDateTime();
     const insertOrder = await get(
       `
       INSERT INTO orders (token_number, total_amount, payment_mode, order_type, customer_name, customer_address, order_notes, status, created_at, order_date)

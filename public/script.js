@@ -80,15 +80,13 @@ function formatTime(timestamp, orderDate = "") {
   if (!timestamp) return "";
 
   const raw = String(timestamp).trim();
-  let parsed;
-
-  // Treat plain SQL timestamps as UTC from the DB driver, then display in IST.
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(raw)) {
-    parsed = new Date(raw.replace(" ", "T") + "Z");
-  } else {
-    parsed = new Date(raw);
+  const directMatch = raw.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})$/);
+  if (directMatch) {
+    const datePart = String(orderDate || "").match(/^\d{4}-\d{2}-\d{2}$/) ? String(orderDate) : directMatch[1];
+    return `${datePart} ${directMatch[2]}`;
   }
 
+  const parsed = new Date(raw);
   if (Number.isNaN(parsed.getTime())) {
     return raw;
   }
