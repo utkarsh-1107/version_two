@@ -111,6 +111,14 @@ function formatOrderType(orderType) {
   return "Dine In";
 }
 
+function getOrderCode(order) {
+  const code = String(order?.order_code || "").trim();
+  if (code) return code;
+  const token = Number(order?.token_number);
+  if (Number.isInteger(token) && token > 0) return `#${token}`;
+  return "-";
+}
+
 function escapeHtml(text) {
   return String(text || "")
     .replaceAll("&", "&amp;")
@@ -496,7 +504,7 @@ function renderOrderCard(order) {
   const customerMeta = order.customer_name ? `<p class="order-meta">Customer: ${order.customer_name}</p>` : "";
 
   card.innerHTML = `
-    <p class="order-token">#${order.token_number}</p>
+    <p class="order-token">${escapeHtml(getOrderCode(order))}</p>
     <ul class="order-items">${itemsList}</ul>
     <p class="order-total">${formatCurrency(order.total_amount)}</p>
     <p class="order-meta">Payment: ${order.payment_mode.toUpperCase()}</p>
@@ -589,7 +597,7 @@ function openOrderPreview(order) {
     .join("");
 
   orderPreviewBody.innerHTML = `
-    <p><strong>Token:</strong> #${order.token_number}</p>
+    <p><strong>Order:</strong> ${escapeHtml(getOrderCode(order))}</p>
     <p><strong>Status:</strong> ${escapeHtml(order.status)}</p>
     <p><strong>Payment:</strong> ${escapeHtml(String(order.payment_mode || "").toUpperCase())}</p>
     <p><strong>Order Type:</strong> ${formatOrderType(order.order_type)}</p>
@@ -906,9 +914,10 @@ function orderMatchesFilters(order) {
   if (!searchTerm) return true;
 
   const tokenText = String(order.token_number || "");
+  const orderCodeText = String(order.order_code || "");
   const customerText = String(order.customer_name || "");
   const itemText = (order.items || []).map((item) => item.name).join(" ");
-  const haystack = `${tokenText} ${customerText} ${itemText}`.toLowerCase();
+  const haystack = `${tokenText} ${orderCodeText} ${customerText} ${itemText}`.toLowerCase();
   return haystack.includes(searchTerm);
 }
 
@@ -1055,7 +1064,7 @@ async function createOrder(event) {
     upsertOrderInState(payload);
     lastOptimisticMutationAt = Date.now();
     renderBoards();
-    showMessage(`Order created successfully. Token #${payload.token_number}`, "success");
+    showMessage(`Order created successfully. ${getOrderCode(payload)}`, "success");
     clearForm();
     fetchStats().catch(() => {});
   } finally {
@@ -1181,13 +1190,21 @@ function openUrlInNewTabOnly(url) {
   document.body.removeChild(link);
 }
 
-function openInvoicePrint(orderId) {
-  const id = Number(orderId);
+function openInvoicePrint(orderRef) {
+  if (typeof orderRef === "string") {
+    const trimmed = orderRef.trim();
+    if (!trimmed) {
+      throw new Error("Invalid Order ID.");
+    }
+    openUrlInNewTabOnly(`/invoices/${encodeURIComponent(trimmed)}/print`);
+    return;
+  }
+
+  const id = Number(orderRef);
   if (!Number.isInteger(id) || id <= 0) {
     throw new Error("Invalid Order ID.");
   }
-  const url = `/invoices/${id}/print`;
-  openUrlInNewTabOnly(url);
+  openUrlInNewTabOnly(`/invoices/${id}/print`);
 }
 
 function openCompletedInvoicesPrint() {
@@ -1299,8 +1316,8 @@ async function init() {
     if (printOrderInvoiceBtn) {
       printOrderInvoiceBtn.addEventListener("click", () => {
         try {
-          const orderId = Number(invoiceOrderIdInput?.value);
-          openInvoicePrint(orderId);
+          const orderRef = String(invoiceOrderIdInput?.value || "").trim();
+          openInvoicePrint(orderRef);
         } catch (error) {
           showMessage(error.message, "error");
         }

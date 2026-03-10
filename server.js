@@ -33,6 +33,31 @@ const runtimeCache = {
   stats: null,
   statsExpiresAt: 0
 };
+const BUSINESS_INFO = {
+  fssaiNumber: "21520046000143",
+  licenseNumber: "UDYAM-MH-18-0011811",
+  phone: "8369434959",
+  email: "blazingbarbecue@gmail.com",
+  instagram: "https://www.instagram.com/blazingbarbecue/?hl=en",
+  upiId: "9594079955",
+  paymentQrPath: "/icons/payment-qr.jpg",
+  outlets: {
+    mulund: {
+      label: "Outlet 1 - Mulund East",
+      address:
+        "Opp Odesey Showroom Shop no 8, Shanti sadan, 90 Feet Rd, Hanuman Chowk, Mulund East, Mumbai, Maharashtra 400081",
+      lat: "19.169085",
+      lng: "72.961211"
+    },
+    thane: {
+      label: "Outlet 2 - Vasant Vihar, Thane",
+      address:
+        "Khau Galli, opp. Lok Upvan Phase 2 Road, near Dr.Babasaheb Ambedkar chowk, Lok Upvan, Phase 1, Vasant Vihar, Thane West, Thane, Maharashtra 400610",
+      lat: "19.2226412",
+      lng: "72.9702238"
+    }
+  }
+};
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
@@ -250,6 +275,42 @@ function formatInvoiceDate(raw) {
   }).format(parsed);
 }
 
+function formatOrderCode(order) {
+  const token = Number(order?.token_number);
+  if (!Number.isInteger(token) || token <= 0) return "";
+  return String(token).padStart(2, "0");
+}
+
+function decorateOrder(order) {
+  if (!order || typeof order !== "object") return order;
+  return {
+    ...order,
+    order_code: order.order_code || formatOrderCode(order)
+  };
+}
+
+function parseInvoiceReference(rawRef) {
+  const value = String(rawRef || "").trim();
+  if (!value) return null;
+
+  if (/^\d+$/.test(value)) {
+    const idOrToken = Number(value);
+    if (!Number.isInteger(idOrToken) || idOrToken <= 0) return null;
+    return { type: "number", idOrToken };
+  }
+
+  const codeMatch = value.match(/^BLAZ(\d+)(\d{8})$/i);
+  if (!codeMatch) return null;
+  const token = Number(codeMatch[1]);
+  if (!Number.isInteger(token) || token <= 0) return null;
+  return {
+    type: "code",
+    token,
+    datePart: codeMatch[2],
+    normalized: `BLAZ${token}${codeMatch[2]}`
+  };
+}
+
 function renderInvoiceHtml(order, { includePrintButton = true } = {}) {
   const items = Array.isArray(order.items) ? order.items : [];
   const rows = items
@@ -259,18 +320,16 @@ function renderInvoiceHtml(order, { includePrintButton = true } = {}) {
       const unitPrice = quantity > 0 ? lineTotal / quantity : 0;
       return `
         <tr>
-          <td>${escapeHtml(item.name || "-")}</td>
-          <td class="right">${formatInr(unitPrice)}</td>
-          <td class="center">${quantity}</td>
-          <td class="right">${formatInr(lineTotal)}</td>
+          <td class="col-item">${escapeHtml(item.name || "-")}</td>
+          <td class="right col-price">${formatInr(unitPrice)}</td>
+          <td class="center col-qty">${quantity}</td>
+          <td class="right col-total">${formatInr(lineTotal)}</td>
         </tr>
       `;
     })
     .join("");
 
-  const customerName = order.customer_name ? escapeHtml(order.customer_name) : "Walk-in";
-  const customerAddress = order.customer_address ? escapeHtml(order.customer_address) : "Not provided";
-  const orderNotes = order.order_notes ? escapeHtml(order.order_notes) : "Not provided";
+  const thane = BUSINESS_INFO.outlets.thane;
 
   return `
     <section class="invoice-sheet">
@@ -278,33 +337,30 @@ function renderInvoiceHtml(order, { includePrintButton = true } = {}) {
         <div>
           <h1>BLAZING BARBECUE</h1>
           <p class="subtitle">ORDER INVOICE</p>
+          <p class="header-legal">
+            <span><strong>FSSAI Number:</strong> ${escapeHtml(BUSINESS_INFO.fssaiNumber)}</span>
+            <span><strong>License Number:</strong> ${escapeHtml(BUSINESS_INFO.licenseNumber)}</span>
+          </p>
         </div>
         <div class="meta">
-          <p><strong>Order No.:</strong> #${order.token_number}</p>
+          <p><strong>Order No.:</strong> ${escapeHtml(order.order_code || formatOrderCode(order) || `#${order.token_number}`)}</p>
           <p><strong>Date:</strong> ${escapeHtml(formatInvoiceDate(order.created_at))}</p>
         </div>
       </header>
 
-      <div class="invoice-grid">
-        <div>
-          <p><strong>Customer:</strong> ${customerName}</p>
-          <p><strong>Address:</strong> ${customerAddress}</p>
-          <p><strong>Notes:</strong> ${orderNotes}</p>
-        </div>
-        <div>
-          <p><strong>Status:</strong> ${escapeHtml(String(order.status || "").toUpperCase())}</p>
-          <p><strong>Order Type:</strong> ${escapeHtml(order.order_type === "parcel" ? "Parcel" : "Dine In")}</p>
-          <p><strong>Payment:</strong> ${escapeHtml(String(order.payment_mode || "").toUpperCase())}</p>
-        </div>
-      </div>
-
       <table class="invoice-table">
+        <colgroup>
+          <col style="width:54%" />
+          <col style="width:18%" />
+          <col style="width:10%" />
+          <col style="width:18%" />
+        </colgroup>
         <thead>
           <tr>
-            <th>Item</th>
-            <th class="right">Price</th>
-            <th class="center">Qty</th>
-            <th class="right">Total</th>
+            <th class="col-item">Item</th>
+            <th class="right col-price">Price</th>
+            <th class="center col-qty">Qty</th>
+            <th class="right col-total">Total</th>
           </tr>
         </thead>
         <tbody>
@@ -317,8 +373,20 @@ function renderInvoiceHtml(order, { includePrintButton = true } = {}) {
         <strong>${formatInr(order.total_amount || 0)}</strong>
       </div>
 
+      <section class="invoice-payment">
+        <div class="qr-block">
+          <img src="${escapeHtml(BUSINESS_INFO.paymentQrPath)}" alt="Payment QR" onerror="if(!this.dataset.fallbackTried){this.dataset.fallbackTried='1';this.src='/icons/payment-qr.png';return;} this.closest('.qr-block').style.display='none'" />
+          <div class="qr-block-meta">
+            <p><strong>Pay via UPI</strong></p>
+            <p>${escapeHtml(BUSINESS_INFO.upiId)}</p>
+          </div>
+        </div>
+      </section>
+
       <footer class="invoice-footer">
         <p>Thank you for ordering with Blazing Barbecue.</p>
+        <p><strong>Thane Branch:</strong> ${escapeHtml(thane.address)}</p>
+        <p>Follow us on Instagram: <a href="${escapeHtml(BUSINESS_INFO.instagram)}" target="_blank" rel="noopener">@blazingbarbecue</a></p>
       </footer>
 
       ${includePrintButton ? '<button class="print-btn" onclick="window.print()">Print Invoice</button>' : ""}
@@ -338,7 +406,7 @@ function renderInvoiceDocument(content, { title = "Invoice", autoPrint = false }
         :root {
           --primary: #D32F2F;
           --primary-dark: #B71C1C;
-          --line: #EBC3C3;
+          --line: #E5E7EB;
           --text: #1F2937;
           --muted: #6B7280;
         }
@@ -346,7 +414,7 @@ function renderInvoiceDocument(content, { title = "Invoice", autoPrint = false }
         body {
           margin: 0;
           font-family: "Segoe UI", Tahoma, Arial, sans-serif;
-          background: #f7f7f7;
+          background: #fff;
           color: var(--text);
           padding: 20px;
         }
@@ -354,10 +422,10 @@ function renderInvoiceDocument(content, { title = "Invoice", autoPrint = false }
           max-width: 840px;
           margin: 0 auto 20px;
           background: #fff;
-          border: 1px solid var(--line);
-          border-radius: 10px;
+          border: 1px solid #F3F4F6;
+          border-radius: 8px;
           overflow: hidden;
-          box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+          box-shadow: none;
         }
         .invoice-header {
           background: var(--primary);
@@ -377,19 +445,23 @@ function renderInvoiceDocument(content, { title = "Invoice", autoPrint = false }
           font-weight: 700;
           letter-spacing: 0.06em;
         }
-        .meta p { margin: 3px 0; font-size: 13px; text-align: right; }
-        .invoice-grid {
+        .header-legal {
+          margin: 8px 0 0;
+          font-size: 12px;
+          line-height: 1.4;
           display: grid;
           grid-template-columns: 1fr 1fr;
-          gap: 12px;
-          padding: 14px 20px 8px;
+          gap: 6px 14px;
+          color: #fff;
         }
-        .invoice-grid p { margin: 4px 0; font-size: 13px; }
+        .meta p { margin: 3px 0; font-size: 13px; text-align: right; }
         .invoice-table {
           width: calc(100% - 40px);
-          margin: 8px 20px;
+          margin: 12px 20px 8px;
           border-collapse: collapse;
           font-size: 13px;
+          table-layout: fixed;
+          font-variant-numeric: tabular-nums;
         }
         .invoice-table th {
           background: var(--primary-dark);
@@ -397,10 +469,28 @@ function renderInvoiceDocument(content, { title = "Invoice", autoPrint = false }
           text-align: left;
           padding: 10px 8px;
         }
+        .invoice-table th.right,
+        .invoice-table td.right {
+          text-align: right;
+        }
+        .invoice-table th.center,
+        .invoice-table td.center {
+          text-align: center;
+        }
         .invoice-table td {
           border-bottom: 1px solid #efefef;
           padding: 10px 8px;
-          vertical-align: top;
+          vertical-align: middle;
+        }
+        .col-item {
+          text-align: left;
+          word-break: break-word;
+        }
+        .col-price, .col-total {
+          white-space: nowrap;
+        }
+        .col-qty {
+          white-space: nowrap;
         }
         .right { text-align: right; }
         .center { text-align: center; }
@@ -413,11 +503,49 @@ function renderInvoiceDocument(content, { title = "Invoice", autoPrint = false }
           display: flex;
           justify-content: space-between;
           align-items: center;
-          background: #fff7f7;
+          background: #FAFAFA;
         }
         .invoice-total span { font-weight: 700; text-transform: uppercase; font-size: 13px; }
         .invoice-total strong { color: var(--primary-dark); font-size: 20px; }
+        .invoice-payment {
+          margin: 4px 20px 0;
+          display: flex;
+          justify-content: flex-end;
+        }
+        .qr-block {
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          padding: 6px 8px;
+          border: 1px solid var(--line);
+          border-radius: 8px;
+          background: #fff;
+          gap: 8px;
+        }
+        .qr-block-meta {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 2px;
+        }
+        .qr-block img {
+          width: 82px;
+          height: 82px;
+          object-fit: contain;
+          border: 1px solid #ececec;
+          border-radius: 6px;
+          background: #fff;
+          padding: 2px;
+        }
+        .qr-block p {
+          margin: 0;
+          font-size: 11px;
+          line-height: 1.25;
+          text-align: center;
+        }
         .invoice-footer { padding: 0 20px 16px; color: var(--muted); font-size: 12px; }
+        .invoice-footer p { margin: 6px 0 0; }
+        .invoice-footer a { color: var(--primary-dark); text-decoration: underline; }
         .print-btn {
           margin: 0 20px 20px;
           border: none;
@@ -431,12 +559,16 @@ function renderInvoiceDocument(content, { title = "Invoice", autoPrint = false }
         .print-btn:hover { background: var(--primary-dark); }
         @media (max-width: 640px) {
           body { padding: 10px; }
-          .invoice-grid { grid-template-columns: 1fr; }
+          .header-legal { grid-template-columns: 1fr; }
           .meta p { text-align: left; }
           .invoice-header { flex-direction: column; }
+          .invoice-payment { justify-content: flex-start; }
+          .qr-block { justify-content: flex-start; }
         }
         @media print {
-          body { background: #f7f7f7; padding: 0; }
+          @page { margin: 8mm; }
+          html, body { background: #fff !important; }
+          body { padding: 0; }
           .invoice-sheet { margin: 0 0 10mm; }
           .print-btn { display: none; }
           .invoice-sheet { page-break-after: always; }
@@ -529,7 +661,7 @@ app.get("/orders", async (req, res) => {
   try {
     if (!(await ensureDatabaseReady(res))) return;
     const includeCompleted = req.query.includeCompleted === "true";
-    const orders = await db.getOrders(includeCompleted);
+    const orders = (await db.getOrders(includeCompleted)).map(decorateOrder);
     res.setHeader("Cache-Control", "no-store");
     res.json(orders);
   } catch (error) {
@@ -550,7 +682,7 @@ app.get("/orders/:id", async (req, res) => {
     if (!order) {
       return res.status(404).json({ error: "Order not found." });
     }
-    return res.json(order);
+    return res.json(decorateOrder(order));
   } catch (error) {
     return res.status(500).json({ error: "Failed to fetch order." });
   }
@@ -573,7 +705,7 @@ app.post("/orders", async (req, res) => {
     });
     invalidateRuntimeCache();
     broadcastEvent("orders_changed", { action: "created", order_id: order.id });
-    res.status(201).json(order);
+    res.status(201).json(decorateOrder(order));
   } catch (error) {
     res.status(400).json({ error: error.message || "Failed to create order." });
   }
@@ -598,7 +730,7 @@ app.put("/orders/:id/status", async (req, res) => {
 
     invalidateRuntimeCache();
     broadcastEvent("orders_changed", { action: "status_updated", order_id: orderId, status });
-    return res.json(updated);
+    return res.json(decorateOrder(updated));
   } catch (error) {
     return res.status(400).json({ error: error.message || "Failed to update order status." });
   }
@@ -624,7 +756,7 @@ app.put("/orders/:id/edit", async (req, res) => {
 
     invalidateRuntimeCache();
     broadcastEvent("orders_changed", { action: "edited", order_id: orderId });
-    return res.json(updated);
+    return res.json(decorateOrder(updated));
   } catch (error) {
     return res.status(400).json({ error: error.message || "Failed to edit order." });
   }
@@ -715,21 +847,33 @@ app.get("/reports/daily-close/pdf", async (req, res) => {
 app.get("/invoices/:id/print", async (req, res) => {
   try {
     if (!(await ensureDatabaseReady(res))) return;
-    const requested = Number(req.params.id);
-    if (!Number.isInteger(requested) || requested <= 0) {
+    const requestedRef = parseInvoiceReference(req.params.id);
+    if (!requestedRef) {
       return res.status(400).send("Invalid order id or token.");
     }
-    let order = await db.getOrderById(requested);
-    if (!order) {
-      const todaysOrders = await db.getOrders(true);
-      order = todaysOrders.find((entry) => Number(entry.token_number) === requested) || null;
+
+    let order = null;
+    if (requestedRef.type === "number") {
+      order = await db.getOrderById(requestedRef.idOrToken);
+      if (!order) {
+        const todaysOrders = await db.getOrders(true);
+        order = todaysOrders.find((entry) => Number(entry.token_number) === requestedRef.idOrToken) || null;
+      }
+    } else {
+      const orders = await db.getOrders(true);
+      order =
+        orders.find((entry) => {
+          const code = formatOrderCode(entry);
+          return code.toUpperCase() === requestedRef.normalized.toUpperCase();
+        }) || null;
     }
     if (!order) {
       return res.status(404).send("Order not found for the provided id/token.");
     }
+    const decoratedOrder = decorateOrder(order);
     const autoPrint = String(req.query.autoprint || "").toLowerCase() === "true";
-    const html = renderInvoiceDocument(renderInvoiceHtml(order), {
-      title: `Invoice #${order.id}`,
+    const html = renderInvoiceDocument(renderInvoiceHtml(decoratedOrder), {
+      title: "Invoice",
       autoPrint
     });
     res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -743,7 +887,7 @@ app.get("/invoices/completed/today/print", async (req, res) => {
   try {
     if (!(await ensureDatabaseReady(res))) return;
     const orders = await db.getOrders(true);
-    const completed = orders.filter((order) => order.status === "completed");
+    const completed = orders.filter((order) => order.status === "completed").map(decorateOrder);
     if (completed.length === 0) {
       return res.status(404).send("No completed orders found for today.");
     }
