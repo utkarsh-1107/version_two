@@ -306,8 +306,8 @@ body {
 }
 
 .food-card-tandoor {
-  border-color: #D9BE95;
-  background: linear-gradient(180deg, #FFF9F1, #FFF3DE);
+  border-color: #FF9933;
+  background: linear-gradient(180deg, #fffaf0, #ffefcf);
 }
 
 .food-card-tag {
@@ -315,9 +315,9 @@ body {
   margin-top: -2px;
   padding: 3px 8px;
   border-radius: 999px;
-  border: 1px solid #D9BE95;
-  background: #FFF0DB;
-  color: #865114;
+  border: 1px solid #FF9933;
+  background: #fff2d9;
+  color: #9a5f05;
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.06em;
