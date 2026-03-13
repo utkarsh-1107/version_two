@@ -745,7 +745,23 @@ app.post("/auth/login", async (req, res) => {
       return res.status(401).json({ error: "Invalid username or password." });
     }
 
-    const user = await db.getUserByUsername(username);
+    let user = null;
+    try {
+      user = await db.getUserByUsername(username);
+    } catch (error) {
+      // When SKIP_DB_INIT=true on serverless, auth can be first touch on a fresh DB.
+      // Try one lazy init+retry before failing.
+      const message = String(error?.message || "").toLowerCase();
+      const shouldRetry =
+        message.includes("relation") ||
+        message.includes("does not exist") ||
+        message.includes("no such table") ||
+        message.includes("column") ||
+        message.includes("not exist");
+      if (!shouldRetry) throw error;
+      await db.initDatabase();
+      user = await db.getUserByUsername(username);
+    }
     if (!user || String(user.password || "") !== password) {
       return res.status(401).json({ error: "Invalid username or password." });
     }
@@ -759,7 +775,8 @@ app.post("/auth/login", async (req, res) => {
         role: normalizeRole(user.role)
       }
     });
-  } catch (_error) {
+  } catch (error) {
+    console.error("POST /auth/login failed:", error);
     return res.status(500).json({ error: "Failed to login." });
   }
 });
