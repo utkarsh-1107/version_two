@@ -6,7 +6,22 @@ types.setTypeParser(1114, (value) => value); // timestamp without time zone
 
 const useSSL =
   ["1", "true"].includes(String(process.env.PGSSL || "").toLowerCase()) || Boolean(process.env.VERCEL);
-const rawConnectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL || "";
+function encodeSegment(value) {
+  return encodeURIComponent(String(value || ""));
+}
+
+function buildConnectionStringFromParts() {
+  const host = process.env.PGHOST || process.env.POSTGRES_HOST || process.env.SUPABASE_DB_HOST || "";
+  const port = process.env.PGPORT || process.env.POSTGRES_PORT || "5432";
+  const database = process.env.PGDATABASE || process.env.POSTGRES_DB || process.env.POSTGRES_DATABASE || "postgres";
+  const user = process.env.PGUSER || process.env.POSTGRES_USER || "";
+  const password = process.env.PGPASSWORD || process.env.POSTGRES_PASSWORD || "";
+  if (!host || !user || !password) return "";
+  return `postgresql://${encodeSegment(user)}:${encodeSegment(password)}@${host}:${port}/${database}`;
+}
+
+const rawConnectionString =
+  process.env.DATABASE_URL || process.env.POSTGRES_URL || buildConnectionStringFromParts();
 let connectionString = rawConnectionString;
 
 if (useSSL && rawConnectionString) {
@@ -54,6 +69,11 @@ async function get(sql, params = []) {
 async function all(sql, params = []) {
   const result = await query(sql, params);
   return result.rows;
+}
+
+async function ping() {
+  const row = await get("SELECT 1 AS ok");
+  return Number(row?.ok || 0) === 1;
 }
 
 const categoriesSeed = [
@@ -1185,6 +1205,7 @@ module.exports = {
   getDailyCloseReport,
   resetDay,
   deleteOrder,
-  query
+  query,
+  ping
 };
 

@@ -710,29 +710,48 @@ function renderInvoiceDocument(content, { title = "Invoice", autoPrint = false }
 
 app.get("/health", async (req, res) => {
   await initPromise;
-  if (initError) {
+  let pingError = null;
+  if (typeof db.ping === "function") {
+    try {
+      await db.ping();
+    } catch (error) {
+      pingError = error;
+    }
+  }
+
+  const config = {
+    db_client: dbClient,
+    is_vercel: IS_VERCEL,
+    read_only: READ_ONLY,
+    skip_db_init: SKIP_DB_INIT,
+    has_database_url: Boolean(
+      process.env.DATABASE_URL ||
+        process.env.POSTGRES_URL ||
+        process.env.POSTGRES_URL_NON_POOLING ||
+        process.env.SUPABASE_DB_URL ||
+        process.env.SUPABASE_DATABASE_URL ||
+        process.env.PG_CONNECTION_STRING
+    ),
+    has_pg_host: Boolean(process.env.PGHOST || process.env.POSTGRES_HOST || process.env.SUPABASE_DB_HOST),
+    has_pg_user: Boolean(process.env.PGUSER || process.env.POSTGRES_USER),
+    has_pg_password: Boolean(process.env.PGPASSWORD || process.env.POSTGRES_PASSWORD)
+  };
+
+  if (initError || pingError) {
+    const error = pingError || initError;
     return res.status(500).json({
       status: "error",
-      error: "Database initialization failed.",
-      detail: initError.message || String(initError),
-      config: {
-        db_client: dbClient,
-        is_vercel: IS_VERCEL,
-        read_only: READ_ONLY,
-        skip_db_init: SKIP_DB_INIT
-      }
+      error: "Database unavailable.",
+      detail: error.message || String(error),
+      code: String(error?.code || "UNKNOWN"),
+      config
     });
   }
 
   return res.json({
     status: "ok",
     database: "ready",
-    config: {
-      db_client: dbClient,
-      is_vercel: IS_VERCEL,
-      read_only: READ_ONLY,
-      skip_db_init: SKIP_DB_INIT
-    }
+    config
   });
 });
 

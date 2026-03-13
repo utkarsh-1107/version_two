@@ -54,6 +54,11 @@ function all(sql, params = []) {
   });
 }
 
+async function ping() {
+  const row = await get("SELECT 1 AS ok");
+  return Number(row?.ok || 0) === 1;
+}
+
 const categoriesSeed = [
   "Appetizers",
   "Wings",
@@ -1260,6 +1265,7 @@ module.exports = {
   getStats,
   getDailyCloseReport,
   resetDay,
-  deleteOrder
+  deleteOrder,
+  ping
 };
 
