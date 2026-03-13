@@ -1,4 +1,7 @@
 const menuContainer = document.getElementById("menu-container");
+const categoryCardsEl = document.getElementById("category-cards");
+const activeCategoryTitleEl = document.getElementById("active-category-title");
+const menuCarouselEl = document.getElementById("menu-carousel");
 const orderForm = document.getElementById("order-form");
 const orderTotalEl = document.getElementById("order-total");
 const messageEl = document.getElementById("message");
@@ -56,6 +59,9 @@ let realtimeConnected = false;
 let lastCompletedFetchAt = 0;
 let lastOptimisticMutationAt = 0;
 let createOrderInProgress = false;
+let groupedMenuByCategory = {};
+let orderedMenuCategories = [];
+let activeMenuCategory = "";
 const touchStartXByOrderId = new Map();
 const COMPLETED_REFRESH_MS = 30000;
 const MUTATION_GRACE_MS = 30000;
@@ -71,6 +77,17 @@ const categoryOrder = [
   "Drumsticks",
   "Extras"
 ];
+
+const categoryEmojiMap = {
+  wings: "🍗",
+  wraps: "🌯",
+  sandwiches: "🥪",
+  sandwich: "🥪",
+  hotdogs: "🌭",
+  "hot dogs": "🌭",
+  drumsticks: "🍖",
+  extras: "➕"
+};
 
 function formatCurrency(value) {
   return `Rs ${Number(value).toFixed(2)}`;
@@ -176,6 +193,25 @@ function groupByCategory(items) {
     acc[item.category].push(item);
     return acc;
   }, {});
+}
+
+function normalizeCategoryName(category) {
+  return String(category || "").trim().toLowerCase();
+}
+
+function getCategoryEmoji(category) {
+  return categoryEmojiMap[normalizeCategoryName(category)] || "🍽️";
+}
+
+function getOrderedCategoriesFromGrouped(grouped) {
+  const categories = Object.keys(grouped);
+  const knownOrder = categoryOrder.filter((c) => categories.includes(c));
+  const unknownOrder = categories.filter((c) => !knownOrder.includes(c));
+  return [...knownOrder, ...unknownOrder];
+}
+
+function getHiddenInputForItemId(itemId) {
+  return menuContainer.querySelector(`.menu-item-qty[data-id="${String(itemId)}"]`);
 }
 
 function parseAppetizerVariantName(itemName) {
@@ -362,29 +398,114 @@ function renderRegularCategory(items, sectionEl) {
 }
 
 function renderMenu() {
-  const grouped = groupByCategory(menuItems);
-  const categories = Object.keys(grouped);
-  const knownOrder = categoryOrder.filter((c) => categories.includes(c));
-  const unknownOrder = categories.filter((c) => !knownOrder.includes(c));
-  const orderedCategories = [...knownOrder, ...unknownOrder];
-
+  groupedMenuByCategory = groupByCategory(menuItems);
+  orderedMenuCategories = getOrderedCategoriesFromGrouped(groupedMenuByCategory);
   menuContainer.innerHTML = "";
 
-  orderedCategories.forEach((category) => {
+  orderedMenuCategories.forEach((category) => {
     const groupEl = document.createElement("section");
     groupEl.className = "menu-group";
-
-    const heading = document.createElement("h3");
-    heading.textContent = category;
-    groupEl.appendChild(heading);
-
-    if (category === "Appetizers") {
-      renderAppetizerRows(grouped[category], groupEl);
-    } else {
-      renderRegularCategory(grouped[category], groupEl);
-    }
-
+    groupEl.dataset.category = category;
+    renderRegularCategory(groupedMenuByCategory[category], groupEl);
     menuContainer.appendChild(groupEl);
+  });
+
+  activeMenuCategory = orderedMenuCategories[0] || "";
+  renderCategoryCards();
+  renderCategoryItems(activeMenuCategory);
+}
+
+function renderCategoryCards() {
+  if (!categoryCardsEl) return;
+  categoryCardsEl.innerHTML = "";
+
+  orderedMenuCategories.forEach((category) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "category-card";
+    if (category === activeMenuCategory) {
+      button.classList.add("active");
+    }
+    button.dataset.category = category;
+    button.innerHTML = `
+      <span class="category-icon" aria-hidden="true">${getCategoryEmoji(category)}</span>
+      <span class="category-name">${escapeHtml(category)}</span>
+    `;
+    button.addEventListener("click", () => {
+      if (category === activeMenuCategory) return;
+      activeMenuCategory = category;
+      renderCategoryCards();
+      renderCategoryItems(category);
+    });
+    categoryCardsEl.appendChild(button);
+  });
+}
+
+function renderCategoryItems(category) {
+  if (!menuCarouselEl || !activeCategoryTitleEl) return;
+  menuCarouselEl.innerHTML = "";
+
+  if (!category || !groupedMenuByCategory[category]) {
+    activeCategoryTitleEl.textContent = "Select a Category";
+    return;
+  }
+
+  const items = groupedMenuByCategory[category];
+  activeCategoryTitleEl.textContent = `${getCategoryEmoji(category)} ${category}`;
+
+  items.forEach((item) => {
+    const hiddenInput = getHiddenInputForItemId(item.id);
+    if (!hiddenInput) return;
+
+    const card = document.createElement("article");
+    card.className = "food-card";
+
+    const title = document.createElement("h4");
+    title.className = "food-card-title";
+    title.textContent = item.name;
+
+    const price = document.createElement("p");
+    price.className = "food-card-price";
+    price.textContent = formatCurrency(item.price);
+
+    const controls = document.createElement("div");
+    controls.className = "food-qty-controls";
+
+    const minusBtn = document.createElement("button");
+    minusBtn.type = "button";
+    minusBtn.className = "food-qty-btn";
+    minusBtn.textContent = "-";
+    minusBtn.setAttribute("aria-label", `Decrease ${item.name}`);
+
+    const qtyValue = document.createElement("span");
+    qtyValue.className = "food-qty-value";
+    qtyValue.textContent = String(Number(hiddenInput.value) || 0);
+
+    const plusBtn = document.createElement("button");
+    plusBtn.type = "button";
+    plusBtn.className = "food-qty-btn";
+    plusBtn.textContent = "+";
+    plusBtn.setAttribute("aria-label", `Increase ${item.name}`);
+
+    const updateQty = (delta) => {
+      const current = Number(hiddenInput.value) || 0;
+      const next = Math.min(MAX_QTY_PER_ITEM, Math.max(0, current + delta));
+      hiddenInput.value = String(next);
+      qtyValue.textContent = String(next);
+      calculateTotal();
+    };
+
+    minusBtn.addEventListener("click", () => updateQty(-1));
+    plusBtn.addEventListener("click", () => updateQty(1));
+
+    controls.appendChild(minusBtn);
+    controls.appendChild(qtyValue);
+    controls.appendChild(plusBtn);
+
+    card.appendChild(title);
+    card.appendChild(price);
+    card.appendChild(controls);
+    menuCarouselEl.appendChild(card);
   });
 }
 
@@ -497,6 +618,7 @@ function clearForm() {
   if (orderNotesInput) orderNotesInput.value = "";
   if (customerDetailsPanel) customerDetailsPanel.open = false;
   calculateTotal();
+  renderCategoryItems(activeMenuCategory);
 }
 
 function renderOrderCard(order) {
@@ -1070,6 +1192,7 @@ async function createOrder(event) {
     showMessage(`Order created successfully. ${getOrderCode(payload)}`, "success");
     clearForm();
     fetchStats().catch(() => {});
+    printInvoice(payload.id).catch(() => {});
   } finally {
     createOrderInProgress = false;
     if (submitBtn) submitBtn.disabled = false;
@@ -1193,21 +1316,105 @@ function openUrlInNewTabOnly(url) {
   document.body.removeChild(link);
 }
 
-function openInvoicePrint(orderRef) {
-  if (typeof orderRef === "string") {
-    const trimmed = orderRef.trim();
-    if (!trimmed) {
-      throw new Error("Invalid Order ID.");
-    }
-    openUrlInNewTabOnly(`/invoices/${encodeURIComponent(trimmed)}/print`);
-    return;
-  }
+function buildUpiQrImageUrl(totalAmount) {
+  const upiUrl = `upi://pay?pa=merchant@upi&am=${Number(totalAmount).toFixed(2)}&cu=INR`;
+  return `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(upiUrl)}`;
+}
 
-  const id = Number(orderRef);
+async function printInvoice(orderId) {
+  const id = Number(orderId);
   if (!Number.isInteger(id) || id <= 0) {
     throw new Error("Invalid Order ID.");
   }
-  openUrlInNewTabOnly(`/invoices/${id}/print`);
+
+  const response = await fetch(`/orders/${id}`, { cache: "no-store" });
+  const order = await readJsonOrThrow(response, "Failed to fetch order for invoice.");
+
+  const code = escapeHtml(getOrderCode(order));
+  const timestamp = escapeHtml(formatTime(order.created_at, order.order_date));
+  const total = Number(order.total_amount || 0);
+  const totalFormatted = formatCurrency(total);
+  const qrUrl = buildUpiQrImageUrl(total);
+  const itemRows = (order.items || [])
+    .map((item) => {
+      const name = escapeHtml(item.name);
+      const qty = Number(item.quantity) || 0;
+      const lineTotal = Number(item.line_total || 0);
+      return `<tr><td>${name}</td><td>${qty}</td><td>${formatCurrency(lineTotal)}</td></tr>`;
+    })
+    .join("");
+
+  const popup = window.open("", "_blank", "width=420,height=680");
+  if (!popup) {
+    throw new Error("Unable to open invoice window. Please allow pop-ups.");
+  }
+
+  popup.document.write(`
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>Invoice ${code}</title>
+        <style>
+          body { font-family: Arial, sans-serif; padding: 16px; color: #111827; }
+          h1 { margin: 0 0 8px; font-size: 20px; }
+          p { margin: 4px 0; font-size: 13px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+          th, td { border: 1px solid #e5e7eb; padding: 8px; font-size: 13px; text-align: left; }
+          th { background: #f9fafb; }
+          .total { margin-top: 10px; font-size: 16px; font-weight: 700; }
+          .qr-wrap { margin-top: 16px; text-align: center; }
+          .qr-wrap img { width: 180px; height: 180px; }
+          .meta { color: #374151; }
+        </style>
+      </head>
+      <body>
+        <h1>Blazing Barbecue Invoice</h1>
+        <p class="meta"><strong>Token:</strong> ${code}</p>
+        <p class="meta"><strong>Date/Time:</strong> ${timestamp}</p>
+        <table>
+          <thead>
+            <tr><th>Item</th><th>Qty</th><th>Total</th></tr>
+          </thead>
+          <tbody>${itemRows}</tbody>
+        </table>
+        <p class="total">Order Total: ${totalFormatted}</p>
+        <div class="qr-wrap">
+          <p><strong>UPI Payment QR</strong></p>
+          <img src="${qrUrl}" alt="UPI payment QR code" />
+        </div>
+      </body>
+    </html>
+  `);
+  popup.document.close();
+  popup.focus();
+  popup.print();
+}
+
+function openInvoicePrint(orderRef) {
+  if (typeof orderRef === "string") {
+    const raw = orderRef.trim();
+    if (!raw) {
+      throw new Error("Invalid Order ID.");
+    }
+    const parsedFromString = Number(raw);
+    if (Number.isInteger(parsedFromString) && parsedFromString > 0) {
+      printInvoice(parsedFromString).catch((error) => {
+        showMessage(error.message, "error");
+      });
+      return;
+    }
+    openUrlInNewTabOnly(`/invoices/${encodeURIComponent(raw)}/print`);
+    return;
+  }
+
+  const parsed = Number(orderRef);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error("Invalid Order ID.");
+  }
+  printInvoice(parsed).catch((error) => {
+    showMessage(error.message, "error");
+  });
 }
 
 function openCompletedInvoicesPrint() {

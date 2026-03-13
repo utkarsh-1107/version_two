@@ -20,7 +20,14 @@
     <section class="panel order-panel">
       <h2 class="section-title">Add Order</h2>
       <form id="order-form" action="javascript:void(0);">
-        <div id="menu-container" class="menu-container"></div>
+        <div class="menu-layout">
+          <div id="category-cards" class="category-cards"></div>
+          <div class="menu-items-panel">
+            <h3 id="active-category-title"></h3>
+            <div id="menu-carousel" class="menu-carousel"></div>
+          </div>
+        </div>
+        <div id="menu-container" class="menu-container menu-state-store" aria-hidden="true"></div>
 
         <div class="order-mode-block">
           <h3>Order Type</h3>
