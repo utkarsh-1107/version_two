@@ -58,7 +58,6 @@ const MAX_ORDER_NOTES_LEN = 75;
 let menuItems = [];
 let allOrders = [];
 let currentBoardTab = "active";
-let cachedAdminPin = "";
 let currentEditOrderId = null;
 let editCart = [];
 let searchTerm = "";
@@ -1478,15 +1477,8 @@ async function deleteOrder(orderId) {
   const confirmed = window.confirm("Delete this order permanently? This action cannot be undone.");
   if (!confirmed) return;
 
-  let pin = cachedAdminPin;
-  if (!pin) {
-    pin = window.prompt("Enter admin PIN to delete order:");
-  }
-  if (!pin) return;
-
   const response = await apiFetch(`/orders/${orderId}`, {
-    method: "DELETE",
-    headers: { "x-admin-pin": pin }
+    method: "DELETE"
   });
 
   const raw = await response.text();
@@ -1502,14 +1494,10 @@ async function deleteOrder(orderId) {
   }
 
   if (!response.ok) {
-    if (response.status === 403) {
-      cachedAdminPin = "";
-      throw new Error("Invalid admin PIN.");
-    }
+    if (response.status === 403) throw new Error("Access denied.");
     throw new Error(payload.error || "Failed to delete order.");
   }
 
-  cachedAdminPin = pin;
   removeOrderFromState(orderId);
   lastOptimisticMutationAt = Date.now();
   renderBoards();

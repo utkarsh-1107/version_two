@@ -24,7 +24,6 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const IS_VERCEL = Boolean(process.env.VERCEL);
 const READ_ONLY = ["1", "true"].includes(String(process.env.READ_ONLY || "").toLowerCase());
-const ADMIN_PIN = process.env.ADMIN_PIN || "1234";
 const explicitSkipInit = ["1", "true"].includes(String(process.env.SKIP_DB_INIT || "").toLowerCase());
 // On Vercel+Postgres, cold starts should not run full schema/seed init (can hit statement timeout).
 const SKIP_DB_INIT = explicitSkipInit || (IS_VERCEL && dbClient === "postgres");
@@ -1073,11 +1072,6 @@ app.delete("/orders/:id", async (req, res) => {
     const orderId = Number(req.params.id);
     if (!Number.isInteger(orderId) || orderId <= 0) {
       return res.status(400).json({ error: "Invalid order id." });
-    }
-
-    const providedPin = String(req.header("x-admin-pin") || req.body?.admin_pin || "").trim();
-    if (!providedPin || providedPin !== String(ADMIN_PIN).trim()) {
-      return res.status(403).json({ error: "Admin access denied." });
     }
 
     const deleted = await db.deleteOrder(orderId);
