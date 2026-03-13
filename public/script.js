@@ -1,4 +1,4 @@
-const menuContainer = document.getElementById("menu-container");
+﻿const menuContainer = document.getElementById("menu-container");
 const categoryCardsEl = document.getElementById("category-cards");
 const activeCategoryTitleEl = document.getElementById("active-category-title");
 const menuCarouselEl = document.getElementById("menu-carousel");
@@ -93,14 +93,14 @@ const categoryOrder = [
 ];
 
 const categoryEmojiMap = {
-  wings: "🍗",
-  wraps: "🌯",
-  sandwiches: "🥪",
-  sandwich: "🥪",
-  hotdogs: "🌭",
-  "hot dogs": "🌭",
-  drumsticks: "🍖",
-  extras: "➕"
+  wings: "\u{1F357}",
+  wraps: "\u{1F32F}",
+  sandwiches: "\u{1F96A}",
+  sandwich: "\u{1F96A}",
+  hotdogs: "\u{1F32D}",
+  "hot dogs": "\u{1F32D}",
+  drumsticks: "\u{1F356}",
+  extras: "\u{2795}"
 };
 
 const categoryImageMap = {
@@ -310,7 +310,7 @@ function normalizeCategoryName(category) {
 }
 
 function getCategoryEmoji(category) {
-  return categoryEmojiMap[normalizeCategoryName(category)] || "🍽️";
+  return categoryEmojiMap[normalizeCategoryName(category)] || "\u{1F37D}\uFE0F";
 }
 
 function getCategoryImage(category) {
@@ -319,12 +319,12 @@ function getCategoryImage(category) {
 
 function getFoodEmoji(itemName = "", category = "") {
   const text = `${String(itemName)} ${String(category)}`.toLowerCase();
-  if (text.includes("wing")) return "🍗";
-  if (text.includes("wrap")) return "🌯";
-  if (text.includes("sandwich")) return "🥪";
-  if (text.includes("hotdog") || text.includes("hot dog")) return "🌭";
-  if (text.includes("drumstick") || text.includes("leg")) return "🍖";
-  if (text.includes("extra")) return "➕";
+  if (text.includes("wing")) return "\u{1F357}";
+  if (text.includes("wrap")) return "\u{1F32F}";
+  if (text.includes("sandwich")) return "\u{1F96A}";
+  if (text.includes("hotdog") || text.includes("hot dog")) return "\u{1F32D}";
+  if (text.includes("drumstick") || text.includes("leg")) return "\u{1F356}";
+  if (text.includes("extra")) return "\u{2795}";
   return getCategoryEmoji(category);
 }
 
@@ -1860,5 +1860,6 @@ async function init() {
 }
 
 init();
+
 
 

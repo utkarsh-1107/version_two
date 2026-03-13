@@ -41,7 +41,7 @@ const BUSINESS_INFO = {
   email: "blazingbarbecue@gmail.com",
   instagram: "https://www.instagram.com/blazingbarbecue/?hl=en",
   upiId: "9594079955",
-  paymentQrPath: "/icons/payment-qr.jpg",
+  paymentQrPath: "/icons/payment-qr.png",
   outlets: {
     mulund: {
       label: "Outlet 1 - Mulund East",
