@@ -1589,93 +1589,11 @@ function openUrlInNewTabOnly(url) {
   document.body.removeChild(link);
 }
 
-function buildUpiQrImageUrl(totalAmount) {
-  const upiUrl = `upi://pay?pa=merchant@upi&am=${Number(totalAmount).toFixed(2)}&cu=INR`;
-  return `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(upiUrl)}`;
-}
-
-async function printInvoice(orderId) {
-  const id = Number(orderId);
-  if (!Number.isInteger(id) || id <= 0) {
-    throw new Error("Invalid Order ID.");
-  }
-
-  const response = await apiFetch(`/orders/${id}`, { cache: "no-store" });
-  const order = await readJsonOrThrow(response, "Failed to fetch order for invoice.");
-
-  const code = escapeHtml(getOrderCode(order));
-  const timestamp = escapeHtml(formatTime(order.created_at, order.order_date));
-  const total = Number(order.total_amount || 0);
-  const totalFormatted = formatCurrency(total);
-  const qrUrl = buildUpiQrImageUrl(total);
-  const itemRows = (order.items || [])
-    .map((item) => {
-      const name = escapeHtml(item.name);
-      const qty = Number(item.quantity) || 0;
-      const lineTotal = Number(item.line_total || 0);
-      return `<tr><td>${name}</td><td>${qty}</td><td>${formatCurrency(lineTotal)}</td></tr>`;
-    })
-    .join("");
-
-  const popup = window.open("", "_blank", "width=420,height=680");
-  if (!popup) {
-    throw new Error("Unable to open invoice window. Please allow pop-ups.");
-  }
-
-  popup.document.write(`
-    <!doctype html>
-    <html>
-      <head>
-        <meta charset="utf-8" />
-        <title>Invoice ${code}</title>
-        <style>
-          body { font-family: Arial, sans-serif; padding: 16px; color: #111827; }
-          h1 { margin: 0 0 8px; font-size: 20px; }
-          p { margin: 4px 0; font-size: 13px; }
-          table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-          th, td { border: 1px solid #e5e7eb; padding: 8px; font-size: 13px; text-align: left; }
-          th { background: #f9fafb; }
-          .total { margin-top: 10px; font-size: 16px; font-weight: 700; }
-          .qr-wrap { margin-top: 16px; text-align: center; }
-          .qr-wrap img { width: 180px; height: 180px; }
-          .meta { color: #374151; }
-        </style>
-      </head>
-      <body>
-        <h1>Blazing Barbecue Invoice</h1>
-        <p class="meta"><strong>Token:</strong> ${code}</p>
-        <p class="meta"><strong>Date/Time:</strong> ${timestamp}</p>
-        <table>
-          <thead>
-            <tr><th>Item</th><th>Qty</th><th>Total</th></tr>
-          </thead>
-          <tbody>${itemRows}</tbody>
-        </table>
-        <p class="total">Order Total: ${totalFormatted}</p>
-        <div class="qr-wrap">
-          <p><strong>UPI Payment QR</strong></p>
-          <img src="${qrUrl}" alt="UPI payment QR code" />
-        </div>
-      </body>
-    </html>
-  `);
-  popup.document.close();
-  popup.focus();
-  popup.print();
-}
-
 function openInvoicePrint(orderRef) {
   if (typeof orderRef === "string") {
     const raw = orderRef.trim();
     if (!raw) {
       throw new Error("Invalid Order ID.");
-    }
-    const parsedFromString = Number(raw);
-    if (Number.isInteger(parsedFromString) && parsedFromString > 0) {
-      printInvoice(parsedFromString).catch((error) => {
-        showMessage(error.message, "error");
-      });
-      return;
     }
     openUrlInNewTabOnly(`/invoices/${encodeURIComponent(raw)}/print`);
     return;
@@ -1685,9 +1603,7 @@ function openInvoicePrint(orderRef) {
   if (!Number.isInteger(parsed) || parsed <= 0) {
     throw new Error("Invalid Order ID.");
   }
-  printInvoice(parsed).catch((error) => {
-    showMessage(error.message, "error");
-  });
+  openUrlInNewTabOnly(`/invoices/${encodeURIComponent(String(parsed))}/print`);
 }
 
 function openCompletedInvoicesPrint() {
