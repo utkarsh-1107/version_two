@@ -777,7 +777,11 @@ app.post("/auth/login", async (req, res) => {
     });
   } catch (error) {
     console.error("POST /auth/login failed:", error);
-    return res.status(500).json({ error: "Failed to login." });
+    const code = String(error?.code || "UNKNOWN");
+    return res.status(500).json({
+      error: "Failed to login.",
+      code
+    });
   }
 });
 
