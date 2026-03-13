@@ -7,7 +7,9 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
+    "db:init:postgres": "node -e \"require('./database-postgres').initDatabase().then(()=>{console.log('Postgres schema ready');process.exit(0);}).catch((e)=>{console.error(e);process.exit(1);})\"",
     "migrate:postgres": "node scripts/migrate-sqlite-to-postgres.js",
+    "migrate:supabase": "node scripts/migrate-sqlite-to-postgres.js",
     "seed:generate": "node scripts/generate-seed-sql.js",
     "seed:apply": "node scripts/apply-seed-sql.js",
     "smoke": "node scripts/smoke-test.js"
