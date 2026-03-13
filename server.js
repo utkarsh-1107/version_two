@@ -37,7 +37,7 @@ const runtimeCache = {
 const BUSINESS_INFO = {
   fssaiNumber: "21520046000143",
   licenseNumber: "UDYAM-MH-18-0011811",
-  phone: "8369434959",
+  phone: "9321836106",
   email: "blazingbarbecue@gmail.com",
   instagram: "https://www.instagram.com/blazingbarbecue/?hl=en",
   upiId: "9594079955",
@@ -253,6 +253,15 @@ function renderDailyClosePdf(doc, report) {
     .font("Helvetica")
     .fontSize(9)
     .text(`Generated: ${new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}`, margin, doc.page.height - 30);
+
+  doc
+    .fillColor("#666666")
+    .font("Helvetica")
+    .fontSize(9)
+    .text(`Phone: ${BUSINESS_INFO.phone} | Email: ${BUSINESS_INFO.email}`, margin, doc.page.height - 18, {
+      width: contentWidth,
+      align: "right"
+    });
 }
 
 function escapeHtml(text) {
@@ -448,8 +457,6 @@ function renderInvoiceHtml(order, { includePrintButton = true } = {}) {
     })
     .join("");
 
-  const thane = BUSINESS_INFO.outlets.thane;
-
   return `
     <section class="invoice-sheet">
       <header class="invoice-header">
@@ -504,7 +511,9 @@ function renderInvoiceHtml(order, { includePrintButton = true } = {}) {
 
       <footer class="invoice-footer">
         <p>Thank you for ordering with Blazing Barbecue.</p>
-        <p><strong>Thane Branch:</strong> ${escapeHtml(thane.address)}</p>
+        <p><strong>Thane Branch:</strong> Khau Galli, opp. Lok Upvan Phase 2 Road, near Dr.Babasaheb Ambedkar chowk, Lok Upvan, Phase 1, Vasant Vihar, Thane West, Thane, Maharashtra 400610</p>
+        <p><strong>Phone:</strong> ${escapeHtml(BUSINESS_INFO.phone)}</p>
+        <p><strong>Email:</strong> ${escapeHtml(BUSINESS_INFO.email)}</p>
         <p>Follow us on Instagram: <a href="${escapeHtml(BUSINESS_INFO.instagram)}" target="_blank" rel="noopener">@blazingbarbecue</a></p>
       </footer>
 
