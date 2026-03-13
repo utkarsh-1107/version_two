@@ -62,7 +62,7 @@ const BUSINESS_INFO = {
 };
 
 app.use(express.json());
-app.use(express.static(path.join(__dirname, "public")));
+app.use(express.static(path.join(__dirname, "public"), { index: false }));
 
 let initError = null;
 const initPromise = (SKIP_DB_INIT ? Promise.resolve() : db.initDatabase()).catch((error) => {
@@ -294,6 +294,106 @@ function formatInvoiceDate(raw) {
     hour12: true
   }).format(parsed);
 }
+
+function normalizeRole(value) {
+  return String(value || "").trim().toLowerCase() === "user" ? "user" : "admin";
+}
+
+function parseCookieHeader(cookieHeader = "") {
+  const parsed = {};
+  String(cookieHeader || "")
+    .split(";")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .forEach((entry) => {
+      const equalsIndex = entry.indexOf("=");
+      if (equalsIndex <= 0) return;
+      const key = entry.slice(0, equalsIndex).trim();
+      const value = entry.slice(equalsIndex + 1).trim();
+      parsed[key] = decodeURIComponent(value);
+    });
+  return parsed;
+}
+
+function getCookieUserId(req) {
+  const cookies = parseCookieHeader(req.header("cookie"));
+  const value = Number(cookies.auth_user_id);
+  if (!Number.isInteger(value) || value <= 0) return null;
+  return value;
+}
+
+function buildAuthCookie(userId, clear = false) {
+  const base = "Path=/; HttpOnly; SameSite=Lax";
+  if (clear) return `auth_user_id=; ${base}; Max-Age=0`;
+  return `auth_user_id=${encodeURIComponent(String(userId))}; ${base}; Max-Age=${7 * 24 * 60 * 60}`;
+}
+
+async function resolveRequestUser(req) {
+  const headerUserId = Number(req.header("x-user-id"));
+  const cookieUserId = getCookieUserId(req);
+  const queryUserId = Number(req.query?.user_id);
+  const candidateUserId = [headerUserId, cookieUserId, queryUserId].find(
+    (value) => Number.isInteger(value) && value > 0
+  );
+  if (!Number.isInteger(candidateUserId) || candidateUserId <= 0) {
+    throw new Error("Missing user context.");
+  }
+  const userById = await db.getUserById(candidateUserId);
+  if (!userById) {
+    throw new Error("Invalid user context.");
+  }
+  return userById;
+}
+
+async function attachRequestUser(req, res) {
+  if (req.user) return true;
+  try {
+    req.user = await resolveRequestUser(req);
+    return true;
+  } catch (_error) {
+    res.status(401).json({ error: "Unauthorized user context." });
+    return false;
+  }
+}
+
+function ensureAdminAccess(req, res) {
+  if (req.user?.role === "admin") return true;
+  res.status(403).json({ message: "Access denied", error: "Admin access required." });
+  return false;
+}
+
+function canAccessOrder(user, order) {
+  if (!user || !order) return false;
+  if (user.role === "admin") return true;
+  return Number(order.created_by_user_id) === Number(user.id);
+}
+
+app.get("/", async (req, res) => {
+  if (!(await ensureDatabaseReady(res))) return;
+  try {
+    await resolveRequestUser(req);
+    return res.sendFile(path.join(__dirname, "public", "index.html"));
+  } catch (_error) {
+    return res.redirect("/login");
+  }
+});
+
+app.get("/login", async (req, res) => {
+  if (!(await ensureDatabaseReady(res))) return;
+  try {
+    await resolveRequestUser(req);
+    return res.redirect("/");
+  } catch (_error) {
+    return res.sendFile(path.join(__dirname, "public", "login.html"));
+  }
+});
+
+app.get("/users", async (req, res) => {
+  if (!(await ensureDatabaseReady(res))) return;
+  if (!(await attachRequestUser(req, res))) return;
+  if (!ensureAdminAccess(req, res)) return;
+  return res.sendFile(path.join(__dirname, "public", "users.html"));
+});
 
 function formatOrderCode(order) {
   const token = Number(order?.token_number);
@@ -636,8 +736,132 @@ app.get("/health", async (req, res) => {
   });
 });
 
+app.post("/auth/login", async (req, res) => {
+  try {
+    if (!(await ensureDatabaseReady(res))) return;
+    const username = String(req.body?.username || "").trim().toLowerCase();
+    const password = String(req.body?.password || "").trim();
+    if (!username || !password) {
+      return res.status(401).json({ error: "Invalid username or password." });
+    }
+
+    const user = await db.getUserByUsername(username);
+    if (!user || String(user.password || "") !== password) {
+      return res.status(401).json({ error: "Invalid username or password." });
+    }
+    res.setHeader("Set-Cookie", buildAuthCookie(user.id, false));
+    res.setHeader("Cache-Control", "no-store");
+    return res.json({
+      user: {
+        id: user.id,
+        name: user.name,
+        username: user.username,
+        role: normalizeRole(user.role)
+      }
+    });
+  } catch (_error) {
+    return res.status(500).json({ error: "Failed to login." });
+  }
+});
+
+app.post("/auth/logout", async (_req, res) => {
+  res.setHeader("Set-Cookie", buildAuthCookie(0, true));
+  res.setHeader("Cache-Control", "no-store");
+  return res.json({ message: "Logged out." });
+});
+
+app.get("/auth/me", async (req, res) => {
+  try {
+    if (!(await ensureDatabaseReady(res))) return;
+    if (!(await attachRequestUser(req, res))) return;
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      id: req.user.id,
+      name: req.user.name,
+      username: req.user.username,
+      role: req.user.role
+    });
+  } catch (_error) {
+    res.status(500).json({ error: "Failed to resolve session user." });
+  }
+});
+
+app.get("/users/list", async (req, res) => {
+  try {
+    if (!(await ensureDatabaseReady(res))) return;
+    if (!(await attachRequestUser(req, res))) return;
+    if (!ensureAdminAccess(req, res)) return;
+    const users = await db.getUsers();
+    res.setHeader("Cache-Control", "no-store");
+    res.json(users);
+  } catch (error) {
+    res.status(500).json({ error: error.message || "Failed to fetch users." });
+  }
+});
+
+app.post("/users", async (req, res) => {
+  try {
+    if (!(await ensureDatabaseReady(res))) return;
+    if (!(await attachRequestUser(req, res))) return;
+    if (!ensureAdminAccess(req, res)) return;
+    if (READ_ONLY) {
+      return res.status(405).json({ error: "Read-only mode is enabled." });
+    }
+    const user = await db.createUser({
+      name: req.body?.name,
+      username: req.body?.username,
+      password: req.body?.password,
+      role: req.body?.role
+    });
+    res.status(201).json(user);
+  } catch (error) {
+    res.status(400).json({ error: error.message || "Failed to create user." });
+  }
+});
+
+app.put("/users/:id", async (req, res) => {
+  try {
+    if (!(await ensureDatabaseReady(res))) return;
+    if (!(await attachRequestUser(req, res))) return;
+    if (!ensureAdminAccess(req, res)) return;
+    if (READ_ONLY) {
+      return res.status(405).json({ error: "Read-only mode is enabled." });
+    }
+    const updated = await db.updateUser(req.params.id, {
+      name: req.body?.name,
+      role: req.body?.role,
+      password: req.body?.password
+    });
+    if (!updated) {
+      return res.status(404).json({ error: "User not found." });
+    }
+    res.json(updated);
+  } catch (error) {
+    res.status(400).json({ error: error.message || "Failed to update user." });
+  }
+});
+
+app.delete("/users/:id", async (req, res) => {
+  try {
+    if (!(await ensureDatabaseReady(res))) return;
+    if (!(await attachRequestUser(req, res))) return;
+    if (!ensureAdminAccess(req, res)) return;
+    if (READ_ONLY) {
+      return res.status(405).json({ error: "Read-only mode is enabled." });
+    }
+    const deleted = await db.deleteUser(req.params.id, req.user.id);
+    if (!deleted) {
+      return res.status(404).json({ error: "User not found." });
+    }
+    res.json({ message: "User deleted." });
+  } catch (error) {
+    res.status(400).json({ error: error.message || "Failed to delete user." });
+  }
+});
+
 app.get("/events", async (req, res) => {
   if (!(await ensureDatabaseReady(res))) return;
+  if (!(await attachRequestUser(req, res))) return;
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
@@ -654,6 +878,7 @@ app.get("/events", async (req, res) => {
 app.get("/menu", async (req, res) => {
   try {
     if (!(await ensureDatabaseReady(res))) return;
+    if (!(await attachRequestUser(req, res))) return;
     const menu = await db.getMenu();
     res.setHeader("Cache-Control", "no-store");
     res.json(menu);
@@ -669,6 +894,7 @@ app.get("/menu", async (req, res) => {
 app.get("/appetizers", async (req, res) => {
   try {
     if (!(await ensureDatabaseReady(res))) return;
+    if (!(await attachRequestUser(req, res))) return;
     const appetizers = await db.getAppetizers();
     res.json(appetizers);
   } catch (error) {
@@ -680,8 +906,12 @@ app.get("/appetizers", async (req, res) => {
 app.get("/orders", async (req, res) => {
   try {
     if (!(await ensureDatabaseReady(res))) return;
+    if (!(await attachRequestUser(req, res))) return;
     const includeCompleted = req.query.includeCompleted === "true";
-    const orders = (await db.getOrders(includeCompleted)).map(decorateOrder);
+    let orders = (await db.getOrders(includeCompleted)).map(decorateOrder);
+    if (req.user.role !== "admin") {
+      orders = orders.filter((order) => canAccessOrder(req.user, order));
+    }
     res.setHeader("Cache-Control", "no-store");
     res.json(orders);
   } catch (error) {
@@ -693,6 +923,7 @@ app.get("/orders", async (req, res) => {
 app.get("/orders/:id", async (req, res) => {
   try {
     if (!(await ensureDatabaseReady(res))) return;
+    if (!(await attachRequestUser(req, res))) return;
     const orderId = Number(req.params.id);
     if (!Number.isInteger(orderId) || orderId <= 0) {
       return res.status(400).json({ error: "Invalid order id." });
@@ -701,6 +932,9 @@ app.get("/orders/:id", async (req, res) => {
     const order = await db.getOrderById(orderId);
     if (!order) {
       return res.status(404).json({ error: "Order not found." });
+    }
+    if (!canAccessOrder(req.user, order)) {
+      return res.status(403).json({ error: "Access denied." });
     }
     return res.json(decorateOrder(order));
   } catch (error) {
@@ -711,6 +945,7 @@ app.get("/orders/:id", async (req, res) => {
 app.post("/orders", async (req, res) => {
   try {
     if (!(await ensureDatabaseReady(res))) return;
+    if (!(await attachRequestUser(req, res))) return;
     if (READ_ONLY) {
       return res.status(405).json({ error: "Read-only mode is enabled." });
     }
@@ -721,7 +956,8 @@ app.post("/orders", async (req, res) => {
       order_type,
       customer_name,
       customer_address,
-      order_notes
+      order_notes,
+      created_by_user_id: req.user.id
     });
     invalidateRuntimeCache();
     broadcastEvent("orders_changed", { action: "created", order_id: order.id });
@@ -734,6 +970,8 @@ app.post("/orders", async (req, res) => {
 app.put("/orders/:id/status", async (req, res) => {
   try {
     if (!(await ensureDatabaseReady(res))) return;
+    if (!(await attachRequestUser(req, res))) return;
+    if (!ensureAdminAccess(req, res)) return;
     if (READ_ONLY) {
       return res.status(405).json({ error: "Read-only mode is enabled." });
     }
@@ -759,6 +997,8 @@ app.put("/orders/:id/status", async (req, res) => {
 app.put("/orders/:id/edit", async (req, res) => {
   try {
     if (!(await ensureDatabaseReady(res))) return;
+    if (!(await attachRequestUser(req, res))) return;
+    if (!ensureAdminAccess(req, res)) return;
     if (READ_ONLY) {
       return res.status(405).json({ error: "Read-only mode is enabled." });
     }
@@ -785,6 +1025,8 @@ app.put("/orders/:id/edit", async (req, res) => {
 app.delete("/orders/:id", async (req, res) => {
   try {
     if (!(await ensureDatabaseReady(res))) return;
+    if (!(await attachRequestUser(req, res))) return;
+    if (!ensureAdminAccess(req, res)) return;
     if (READ_ONLY) {
       return res.status(405).json({ error: "Read-only mode is enabled." });
     }
@@ -814,6 +1056,8 @@ app.delete("/orders/:id", async (req, res) => {
 app.get("/stats", async (req, res) => {
   try {
     if (!(await ensureDatabaseReady(res))) return;
+    if (!(await attachRequestUser(req, res))) return;
+    if (!ensureAdminAccess(req, res)) return;
     const now = Date.now();
     if (runtimeCache.stats && runtimeCache.statsExpiresAt > now) {
       res.setHeader("Cache-Control", "no-store");
@@ -833,6 +1077,8 @@ app.get("/stats", async (req, res) => {
 app.get("/reports/daily-close", async (req, res) => {
   try {
     if (!(await ensureDatabaseReady(res))) return;
+    if (!(await attachRequestUser(req, res))) return;
+    if (!ensureAdminAccess(req, res)) return;
     const report = await db.getDailyCloseReport();
     res.json(report);
   } catch (error) {
@@ -843,6 +1089,8 @@ app.get("/reports/daily-close", async (req, res) => {
 app.get("/reports/daily-close/pdf", async (req, res) => {
   try {
     if (!(await ensureDatabaseReady(res))) return;
+    if (!(await attachRequestUser(req, res))) return;
+    if (!ensureAdminAccess(req, res)) return;
     const report = await db.getDailyCloseReport();
     const filename = `daily-close-${report.date || "report"}.pdf`;
     const doc = new PDFDocument({
@@ -867,6 +1115,7 @@ app.get("/reports/daily-close/pdf", async (req, res) => {
 app.get("/invoices/:id/print", async (req, res) => {
   try {
     if (!(await ensureDatabaseReady(res))) return;
+    if (!(await attachRequestUser(req, res))) return;
     const requestedRef = parseInvoiceReference(req.params.id);
     if (!requestedRef) {
       return res.status(400).send("Invalid order id or token.");
@@ -890,6 +1139,9 @@ app.get("/invoices/:id/print", async (req, res) => {
     if (!order) {
       return res.status(404).send("Order not found for the provided id/token.");
     }
+    if (!canAccessOrder(req.user, order)) {
+      return res.status(403).send("Access denied.");
+    }
     const decoratedOrder = decorateOrder(order);
     const autoPrint = String(req.query.autoprint || "").toLowerCase() === "true";
     const html = renderInvoiceDocument(renderInvoiceHtml(decoratedOrder), {
@@ -906,6 +1158,8 @@ app.get("/invoices/:id/print", async (req, res) => {
 app.get("/invoices/completed/today/print", async (req, res) => {
   try {
     if (!(await ensureDatabaseReady(res))) return;
+    if (!(await attachRequestUser(req, res))) return;
+    if (!ensureAdminAccess(req, res)) return;
     const orders = await db.getOrders(true);
     const completed = orders.filter((order) => order.status === "completed").map(decorateOrder);
     if (completed.length === 0) {
@@ -927,6 +1181,8 @@ app.get("/invoices/completed/today/print", async (req, res) => {
 app.post("/reset-day", async (req, res) => {
   try {
     if (!(await ensureDatabaseReady(res))) return;
+    if (!(await attachRequestUser(req, res))) return;
+    if (!ensureAdminAccess(req, res)) return;
     if (READ_ONLY) {
       return res.status(405).json({ error: "Read-only mode is enabled." });
     }

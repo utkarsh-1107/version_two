@@ -13,7 +13,7 @@ INSERT INTO menu_items (id, category_id, name, price, prep_time_minutes) VALUES
 (1, 1, 'BBQ Chicken Breast - Mini', 100, 10),
 (2, 1, 'BBQ Chicken Breast - Half', 160, 10),
 (3, 1, 'BBQ Chicken Breast - Full', 300, 10),
-(4, 1, 'Tandoori Chicken Breast - Mini', 120, 10),
+(4, 1, 'Tandoori Chicken Breast - Mini', 129, 10),
 (5, 1, 'Tandoori Chicken Breast - Half', 180, 10),
 (6, 1, 'Tandoori Chicken Breast - Full', 340, 10),
 (7, 1, 'Grilled Chicken Sausage (1 pc)', 60, 10),
@@ -72,4 +72,3 @@ SELECT setval(pg_get_serial_sequence('appetizer_variants','id'), COALESCE((SELEC
 SELECT setval(pg_get_serial_sequence('orders','id'), COALESCE((SELECT MAX(id) FROM orders), 1));
 SELECT setval(pg_get_serial_sequence('order_items','id'), COALESCE((SELECT MAX(id) FROM order_items), 1));
 COMMIT;
-

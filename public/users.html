@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>User Management | Blazing Barbecue</title>
+  <link rel="stylesheet" href="/users.css" />
+</head>
+<body>
+  <header class="users-header">
+    <h1>User Management</h1>
+    <div class="header-actions">
+      <a class="btn secondary" href="/">Back to POS</a>
+      <button id="logout-btn" class="btn">Logout</button>
+    </div>
+  </header>
+
+  <main class="users-main">
+    <section class="panel">
+      <h2>Create User</h2>
+      <form id="create-user-form" class="create-form" action="javascript:void(0);">
+        <input id="new-name" type="text" placeholder="Display name" />
+        <input id="new-username" type="text" placeholder="Username (3-32 chars)" required />
+        <input id="new-password" type="password" placeholder="Password" required />
+        <select id="new-role">
+          <option value="user">User</option>
+          <option value="admin">Admin</option>
+        </select>
+        <button class="btn" type="submit">Create</button>
+      </form>
+      <p id="create-message" class="message"></p>
+    </section>
+
+    <section class="panel">
+      <h2>Users</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Name</th>
+              <th>Username</th>
+              <th>Role</th>
+              <th>New Password</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="users-tbody"></tbody>
+        </table>
+      </div>
+      <p id="users-message" class="message"></p>
+    </section>
+  </main>
+
+  <script src="/users.js"></script>
+</body>
+</html>

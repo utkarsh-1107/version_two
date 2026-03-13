@@ -2,6 +2,7 @@ const menuContainer = document.getElementById("menu-container");
 const categoryCardsEl = document.getElementById("category-cards");
 const activeCategoryTitleEl = document.getElementById("active-category-title");
 const menuCarouselEl = document.getElementById("menu-carousel");
+const orderFoldEl = document.getElementById("order-fold");
 const orderForm = document.getElementById("order-form");
 const orderTotalEl = document.getElementById("order-total");
 const messageEl = document.getElementById("message");
@@ -33,17 +34,27 @@ const dailyCloseReportBtn = document.getElementById("daily-close-report-btn");
 const invoiceOrderIdInput = document.getElementById("invoice-order-id");
 const printOrderInvoiceBtn = document.getElementById("print-order-invoice-btn");
 const printCompletedInvoicesBtn = document.getElementById("print-completed-invoices-btn");
+const summaryPanelEl = document.querySelector(".summary-panel");
+const userMenuBtn = document.getElementById("user-menu-btn");
+const userMenuDropdown = document.getElementById("user-menu-dropdown");
+const manageUsersLink = document.getElementById("manage-users-link");
+const currentUserRoleEl = document.getElementById("current-user-role");
+const logoutBtn = document.getElementById("logout-btn");
 const editOrderModal = document.getElementById("edit-order-modal");
 const editOrderItemsEl = document.getElementById("edit-order-items");
 const editMenuListEl = document.getElementById("edit-menu-list");
 const editOrderTotalEl = document.getElementById("edit-order-total");
 const saveOrderChangesBtn = document.getElementById("save-order-changes");
 const closeEditModalBtn = document.getElementById("close-edit-modal");
-const orderPreviewModal = document.getElementById("order-preview-modal");
-const orderPreviewBody = document.getElementById("order-preview-body");
-const closePreviewModalBtn = document.getElementById("close-preview-modal");
+const foodPreviewModal = document.getElementById("food-preview-modal");
+const closeFoodPreviewModalBtn = document.getElementById("close-food-preview-modal");
+const foodPreviewTitleEl = document.getElementById("food-preview-title");
+const foodPreviewVariantsEl = document.getElementById("food-preview-variants");
 
 const MAX_QTY_PER_ITEM = 10;
+const MAX_CUSTOMER_NAME_LEN = 75;
+const MAX_CUSTOMER_ADDRESS_LEN = 255;
+const MAX_ORDER_NOTES_LEN = 75;
 let menuItems = [];
 let allOrders = [];
 let currentBoardTab = "active";
@@ -62,7 +73,9 @@ let createOrderInProgress = false;
 let groupedMenuByCategory = {};
 let orderedMenuCategories = [];
 let activeMenuCategory = "";
-const touchStartXByOrderId = new Map();
+let currentFoodPreviewVariants = [];
+let currentUser = null;
+let currentUserRole = "admin";
 const COMPLETED_REFRESH_MS = 30000;
 const MUTATION_GRACE_MS = 30000;
 
@@ -87,6 +100,19 @@ const categoryEmojiMap = {
   "hot dogs": "🌭",
   drumsticks: "🍖",
   extras: "➕"
+};
+
+const categoryImageMap = {
+  appetizers: "/icons/cbreast.png",
+  wraps: "/icons/cwrap.png",
+  wings: "/icons/cwings.png",
+  sandwiches: "/icons/csub.png",
+  sandwich: "/icons/csub.png",
+  hotdogs: "/icons/chotdog.png",
+  "hot dogs": "/icons/chotdog.png",
+  drumsticks: "/icons/cdrumstick.png",
+  "full leg": "/icons/ctangdi.png",
+  extras: "/icons/dip.png"
 };
 
 function formatCurrency(value) {
@@ -153,6 +179,47 @@ function showMessage(text, type = "success") {
   messageEl.classList.add(type);
 }
 
+function isAdminRole() {
+  return currentUserRole === "admin";
+}
+
+async function apiFetch(url, options = {}) {
+  const mergedOptions = { credentials: "same-origin", ...(options || {}) };
+  return fetch(url, mergedOptions);
+}
+
+function setUserMenuOpen(isOpen) {
+  if (!userMenuDropdown || !userMenuBtn) return;
+  userMenuDropdown.classList.toggle("hidden", !isOpen);
+  userMenuDropdown.setAttribute("aria-hidden", isOpen ? "false" : "true");
+  userMenuBtn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+}
+
+function applyRoleBasedUi() {
+  if (summaryPanelEl) {
+    summaryPanelEl.style.display = isAdminRole() ? "" : "none";
+  }
+  if (currentUserRoleEl) {
+    currentUserRoleEl.textContent = isAdminRole() ? "Admin" : "User";
+  }
+  if (manageUsersLink) {
+    manageUsersLink.classList.toggle("hidden", !isAdminRole());
+  }
+}
+
+async function fetchCurrentUser() {
+  const response = await apiFetch("/auth/me", { cache: "no-store" });
+  const user = await readJsonOrThrow(response, "Failed to resolve user role.");
+  currentUser = user;
+  currentUserRole = String(user?.role || "").toLowerCase() === "user" ? "user" : "admin";
+  applyRoleBasedUi();
+}
+
+async function handleLogout() {
+  await apiFetch("/auth/logout", { method: "POST" });
+  window.location.replace("/login");
+}
+
 async function readJsonOrThrow(response, fallbackMessage) {
   const raw = await response.text();
   let payload = null;
@@ -203,6 +270,135 @@ function getCategoryEmoji(category) {
   return categoryEmojiMap[normalizeCategoryName(category)] || "🍽️";
 }
 
+function getCategoryImage(category) {
+  return categoryImageMap[normalizeCategoryName(category)] || "";
+}
+
+function getFoodEmoji(itemName = "", category = "") {
+  const text = `${String(itemName)} ${String(category)}`.toLowerCase();
+  if (text.includes("wing")) return "🍗";
+  if (text.includes("wrap")) return "🌯";
+  if (text.includes("sandwich")) return "🥪";
+  if (text.includes("hotdog") || text.includes("hot dog")) return "🌭";
+  if (text.includes("drumstick") || text.includes("leg")) return "🍖";
+  if (text.includes("extra")) return "➕";
+  return getCategoryEmoji(category);
+}
+
+function getFoodImageSource(itemName = "", category = "") {
+  const text = `${String(itemName)} ${String(category)}`.toLowerCase();
+  if (text.includes("sausage")) return "/icons/csausages.png";
+  if (text.includes("breast")) return "/icons/cbreast.png";
+  if (text.includes("wing")) return "/icons/cwings.png";
+  if (text.includes("wrap")) return "/icons/cwrap.png";
+  if (text.includes("sandwich")) return "/icons/csub.png";
+  if (text.includes("hotdog") || text.includes("hot dog")) return "/icons/chotdog.png";
+  if (text.includes("drumstick")) return "/icons/cdrumstick.png";
+  if (text.includes("tangdi") || text.includes("full leg") || text.includes("leg")) return "/icons/ctangdi.png";
+  if (text.includes("cheese")) return "/icons/cheese.png";
+  if (text.includes("dip")) return "/icons/dip.png";
+  return getCategoryImage(category);
+}
+
+function isTandoorItemLabel(label = "") {
+  const text = String(label || "").toLowerCase();
+  return text.includes("tandoor") || text.includes("tandoori");
+}
+
+function isPeriPeriItemLabel(label = "") {
+  const text = String(label || "").toLowerCase();
+  return text.includes("peri peri") || text.includes("peri-peri") || text.includes("piri piri") || text.includes("piri-piri");
+}
+
+function parsePortionVariant(itemName) {
+  const match = String(itemName || "").trim().match(/^(.*)\s-\s(mini|half|full|quarter|[0-9]+\s*pcs?)$/i);
+  if (!match) return null;
+  return {
+    baseName: String(match[1] || "").trim(),
+    portion: String(match[2] || "").trim()
+  };
+}
+
+function getPortionSortValue(portion) {
+  const normalized = String(portion || "").trim().toLowerCase();
+  if (normalized === "mini") return 1;
+  if (normalized === "half") return 2;
+  if (normalized === "full") return 3;
+  if (normalized === "quarter") return 4;
+  const pcsMatch = normalized.match(/^([0-9]+)\s*pcs?$/);
+  if (pcsMatch) return 100 + Number(pcsMatch[1] || 0);
+  return 99;
+}
+
+function getDefaultVariantForGroup(variants) {
+  if (!Array.isArray(variants) || variants.length === 0) return null;
+  const normalized = variants.map((entry) => ({
+    ...entry,
+    __portion: String(entry?.portion || "").trim().toLowerCase()
+  }));
+  return (
+    normalized.find((entry) => entry.__portion === "full") ||
+    normalized.find((entry) => entry.__portion === "half") ||
+    normalized.find((entry) => entry.__portion === "mini") ||
+    normalized.find((entry) => entry.__portion === "1 pc" || entry.__portion === "1 pcs") ||
+    normalized[0]
+  );
+}
+
+function getVariantHint(variants) {
+  if (!Array.isArray(variants) || variants.length === 0) return "Preview";
+  const labels = variants
+    .map((entry) => String(entry?.portion || "").toUpperCase().replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  const unique = Array.from(new Set(labels));
+  if (unique.length === 0) return "Preview";
+  if (unique.length <= 3) return unique.join(" / ");
+  return `${unique[0]} / ${unique[1]} / +${unique.length - 2}`;
+}
+
+function groupCategoryItemsForDisplay(items) {
+  const variantGroups = new Map();
+  const ordered = [];
+  const seenVariantKeys = new Set();
+
+  items.forEach((item) => {
+    const parsed = parsePortionVariant(item.name);
+    if (!parsed) {
+      ordered.push({ type: "single", item });
+      return;
+    }
+
+    const key = `${String(item.category || "").toLowerCase()}::${parsed.baseName.toLowerCase()}`;
+    if (!variantGroups.has(key)) {
+      variantGroups.set(key, {
+        baseName: parsed.baseName,
+        variants: []
+      });
+    }
+    variantGroups.get(key).variants.push({
+      item,
+      portion: parsed.portion
+    });
+
+    if (!seenVariantKeys.has(key)) {
+      seenVariantKeys.add(key);
+      ordered.push({ type: "variant", key });
+    }
+  });
+
+  return ordered.map((entry) => {
+    if (entry.type !== "variant") return entry;
+    const group = variantGroups.get(entry.key);
+    if (!group || !Array.isArray(group.variants) || group.variants.length === 0) return null;
+    group.variants.sort((a, b) => getPortionSortValue(a.portion) - getPortionSortValue(b.portion));
+    return {
+      type: "variant_group",
+      baseName: group.baseName,
+      variants: group.variants
+    };
+  }).filter(Boolean);
+}
+
 function getOrderedCategoriesFromGrouped(grouped) {
   const categories = Object.keys(grouped);
   const knownOrder = categoryOrder.filter((c) => categories.includes(c));
@@ -210,26 +406,136 @@ function getOrderedCategoriesFromGrouped(grouped) {
   return [...knownOrder, ...unknownOrder];
 }
 
+function buildVariantSelectionSummary(variants) {
+  if (!Array.isArray(variants) || variants.length === 0) {
+    return "No qty selected";
+  }
+  const parts = [];
+  let total = 0;
+
+  variants.forEach((variant) => {
+    const input = getHiddenInputForItemId(variant?.item?.id);
+    const qty = Number(input?.value) || 0;
+    if (qty <= 0) return;
+    total += qty;
+    const label = String(variant?.portion || "").toUpperCase().replace(/\s+/g, " ").trim();
+    parts.push(`${label}:${qty}`);
+  });
+
+  if (total <= 0) return "No qty selected";
+  return `Selected ${total} (${parts.join(" | ")})`;
+}
+
+function refreshVariantCardSelectionSummaries() {
+  const summaries = document.querySelectorAll(".food-card-selection-summary");
+  summaries.forEach((el) => {
+    const variants = el.__variantMeta;
+    el.textContent = buildVariantSelectionSummary(variants);
+  });
+}
+
 function getHiddenInputForItemId(itemId) {
   return menuContainer.querySelector(`.menu-item-qty[data-id="${String(itemId)}"]`);
 }
 
-function parseAppetizerVariantName(itemName) {
-  const splitIndex = itemName.lastIndexOf(" - ");
-  if (splitIndex === -1) {
-    return { groupName: itemName, portionLabel: "Variant" };
-  }
-  return {
-    groupName: itemName.slice(0, splitIndex),
-    portionLabel: itemName.slice(splitIndex + 3)
-  };
+function setMenuItemQty(itemId, value) {
+  const input = getHiddenInputForItemId(itemId);
+  if (!input) return 0;
+  const clamped = Math.min(MAX_QTY_PER_ITEM, Math.max(0, Number(value) || 0));
+  input.value = String(clamped);
+
+  const selector = `.food-qty-value[data-item-id="${String(itemId)}"]`;
+  document.querySelectorAll(selector).forEach((el) => {
+    el.textContent = String(clamped);
+  });
+
+  refreshVariantCardSelectionSummaries();
+  calculateTotal();
+  return clamped;
 }
 
-function updateAppetizerRowPrice(rowEl) {
-  const checked = rowEl.querySelector(".portion-radio:checked");
-  const priceEl = rowEl.querySelector(".appetizer-price");
-  if (!checked || !priceEl) return;
-  priceEl.textContent = formatCurrency(Number(checked.dataset.price || 0));
+function changeMenuItemQty(itemId, delta) {
+  const input = getHiddenInputForItemId(itemId);
+  if (!input) return 0;
+  const next = (Number(input.value) || 0) + Number(delta || 0);
+  return setMenuItemQty(itemId, next);
+}
+
+function closeFoodPreviewModal() {
+  if (!foodPreviewModal) return;
+  currentFoodPreviewVariants = [];
+  if (foodPreviewVariantsEl) foodPreviewVariantsEl.innerHTML = "";
+  foodPreviewModal.classList.add("hidden");
+  foodPreviewModal.setAttribute("aria-hidden", "true");
+}
+
+function renderVariantPreviewRows() {
+  if (!foodPreviewVariantsEl) return;
+  foodPreviewVariantsEl.innerHTML = "";
+  if (!Array.isArray(currentFoodPreviewVariants) || currentFoodPreviewVariants.length === 0) return;
+
+  currentFoodPreviewVariants.forEach((variant) => {
+    const row = document.createElement("div");
+    row.className = "food-preview-variant-row";
+
+    const meta = document.createElement("div");
+    meta.className = "food-preview-variant-meta";
+
+    const portion = document.createElement("span");
+    portion.className = "food-preview-variant-name";
+    portion.textContent = String(variant.portion || "").toUpperCase();
+
+    const price = document.createElement("span");
+    price.className = "food-preview-variant-price";
+    price.textContent = formatCurrency(variant.item.price);
+
+    const controls = document.createElement("div");
+    controls.className = "food-preview-variant-controls";
+
+    const minusBtn = document.createElement("button");
+    minusBtn.type = "button";
+    minusBtn.className = "food-qty-btn compact";
+    minusBtn.textContent = "-";
+    minusBtn.setAttribute("aria-label", `Decrease ${variant.item.name}`);
+
+    const qty = document.createElement("span");
+    qty.className = "food-qty-value compact";
+    qty.dataset.itemId = String(variant.item.id);
+    const input = getHiddenInputForItemId(variant.item.id);
+    qty.textContent = String(Number(input?.value) || 0);
+
+    const plusBtn = document.createElement("button");
+    plusBtn.type = "button";
+    plusBtn.className = "food-qty-btn compact";
+    plusBtn.textContent = "+";
+    plusBtn.setAttribute("aria-label", `Increase ${variant.item.name}`);
+
+    minusBtn.addEventListener("click", () => {
+      changeMenuItemQty(variant.item.id, -1);
+    });
+    plusBtn.addEventListener("click", () => {
+      changeMenuItemQty(variant.item.id, 1);
+    });
+
+    meta.appendChild(portion);
+    meta.appendChild(price);
+    controls.appendChild(minusBtn);
+    controls.appendChild(qty);
+    controls.appendChild(plusBtn);
+    row.appendChild(meta);
+    row.appendChild(controls);
+    foodPreviewVariantsEl.appendChild(row);
+  });
+}
+
+function openVariantPreview(baseName, variants) {
+  if (!foodPreviewModal || !foodPreviewTitleEl) return;
+  if (!Array.isArray(variants) || variants.length === 0) return;
+  currentFoodPreviewVariants = variants;
+  foodPreviewTitleEl.textContent = baseName;
+  renderVariantPreviewRows();
+  foodPreviewModal.classList.remove("hidden");
+  foodPreviewModal.setAttribute("aria-hidden", "false");
 }
 
 function createQtyStepper(inputClass, max, dataset = {}) {
@@ -284,93 +590,6 @@ function createQtyStepper(inputClass, max, dataset = {}) {
   return { wrapper, input, setValue };
 }
 
-function renderAppetizerRows(appetizers, sectionEl) {
-  const groupedAppetizers = new Map();
-
-  appetizers.forEach((item) => {
-    const parsed = parseAppetizerVariantName(item.name);
-    if (!groupedAppetizers.has(parsed.groupName)) {
-      groupedAppetizers.set(parsed.groupName, []);
-    }
-    groupedAppetizers.get(parsed.groupName).push({
-      ...item,
-      groupName: parsed.groupName,
-      portionLabel: parsed.portionLabel
-    });
-  });
-
-  Array.from(groupedAppetizers.entries()).forEach(([groupName, variants], rowIndex) => {
-    const row = document.createElement("div");
-    row.className = "appetizer-row menu-card";
-    row.dataset.groupKey = groupName;
-
-    const main = document.createElement("div");
-    main.className = "appetizer-main";
-
-    const title = document.createElement("div");
-    title.className = "appetizer-row-title";
-    title.textContent = groupName;
-
-    const tabs = document.createElement("div");
-    tabs.className = "portion-tabs";
-    const radioGroupName = `portion-${rowIndex}-${groupName.replace(/\s+/g, "-").toLowerCase()}`;
-
-    variants.forEach((variant, index) => {
-      const tabLabel = document.createElement("label");
-      tabLabel.className = "portion-tab";
-
-      const radio = document.createElement("input");
-      radio.type = "radio";
-      radio.className = "portion-radio";
-      radio.name = radioGroupName;
-      const hasVariantId = Number.isInteger(Number(variant.variant_id));
-      const isAppetizerVariant = (variant.type || "appetizer") === "appetizer" && hasVariantId;
-      radio.value = String(isAppetizerVariant ? variant.variant_id : variant.id);
-      radio.dataset.price = String(variant.price);
-      radio.dataset.groupId = String(isAppetizerVariant ? variant.group_id || "" : "");
-      radio.dataset.itemType = isAppetizerVariant ? "appetizer" : "menu_item";
-      if (!isAppetizerVariant) {
-        radio.dataset.menuItemId = String(variant.id);
-      }
-      if (index === 0) radio.checked = true;
-      radio.addEventListener("change", () => {
-        updateAppetizerRowPrice(row);
-        calculateTotal();
-      });
-
-      const text = document.createElement("span");
-      text.textContent = variant.portionLabel;
-
-      tabLabel.appendChild(radio);
-      tabLabel.appendChild(text);
-      tabs.appendChild(tabLabel);
-    });
-
-    const price = document.createElement("div");
-    price.className = "appetizer-price";
-    price.textContent = formatCurrency(variants[0].price);
-
-    const controls = document.createElement("div");
-    controls.className = "appetizer-controls";
-
-    const qtyWrap = document.createElement("div");
-    qtyWrap.className = "qty-control";
-    qtyWrap.innerHTML = "<label>Qty</label>";
-    const appetizerStepper = createQtyStepper("appetizer-qty", MAX_QTY_PER_ITEM);
-    qtyWrap.appendChild(appetizerStepper.wrapper);
-
-    main.appendChild(title);
-    main.appendChild(tabs);
-    controls.appendChild(price);
-    controls.appendChild(qtyWrap);
-
-    row.appendChild(main);
-    row.appendChild(controls);
-
-    sectionEl.appendChild(row);
-  });
-}
-
 function renderRegularCategory(items, sectionEl) {
   items.forEach((item) => {
     const row = document.createElement("div");
@@ -418,6 +637,7 @@ function renderMenu() {
 function renderCategoryCards() {
   if (!categoryCardsEl) return;
   categoryCardsEl.innerHTML = "";
+  let activeButton = null;
 
   orderedMenuCategories.forEach((category) => {
     const button = document.createElement("button");
@@ -425,12 +645,27 @@ function renderCategoryCards() {
     button.className = "category-card";
     if (category === activeMenuCategory) {
       button.classList.add("active");
+      activeButton = button;
     }
     button.dataset.category = category;
-    button.innerHTML = `
-      <span class="category-icon" aria-hidden="true">${getCategoryEmoji(category)}</span>
-      <span class="category-name">${escapeHtml(category)}</span>
-    `;
+    const iconWrap = document.createElement("span");
+    iconWrap.className = "category-icon";
+    iconWrap.setAttribute("aria-hidden", "true");
+    const categoryImage = getCategoryImage(category);
+    if (categoryImage) {
+      const iconImg = document.createElement("img");
+      iconImg.src = categoryImage;
+      iconImg.alt = "";
+      iconImg.className = "category-icon-img";
+      iconWrap.appendChild(iconImg);
+    } else {
+      iconWrap.textContent = getCategoryEmoji(category);
+    }
+    const label = document.createElement("span");
+    label.className = "category-name";
+    label.textContent = category;
+    button.appendChild(iconWrap);
+    button.appendChild(label);
     button.addEventListener("click", () => {
       if (category === activeMenuCategory) return;
       activeMenuCategory = category;
@@ -439,6 +674,10 @@ function renderCategoryCards() {
     });
     categoryCardsEl.appendChild(button);
   });
+
+  if (activeButton) {
+    activeButton.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+  }
 }
 
 function renderCategoryItems(category) {
@@ -451,18 +690,121 @@ function renderCategoryItems(category) {
   }
 
   const items = groupedMenuByCategory[category];
-  activeCategoryTitleEl.textContent = `${getCategoryEmoji(category)} ${category}`;
+  const displayItems = groupCategoryItemsForDisplay(items);
+  activeCategoryTitleEl.textContent = category;
 
-  items.forEach((item) => {
+  displayItems.forEach((entry) => {
+    if (entry.type === "variant_group") {
+      const card = document.createElement("article");
+      card.className = "food-card variant-group-card";
+      if (isTandoorItemLabel(entry.baseName)) {
+        card.classList.add("food-card-tandoor");
+      }
+      if (isPeriPeriItemLabel(entry.baseName)) {
+        card.classList.add("food-card-peri");
+      }
+
+      const variantMedia = document.createElement("div");
+      variantMedia.className = "food-card-media";
+      const selectedVariant = getDefaultVariantForGroup(entry.variants);
+      if (!selectedVariant?.item) return;
+      const variantSample = selectedVariant.item;
+      const variantImageSrc = getFoodImageSource(variantSample?.name || "", category);
+      if (variantImageSrc) {
+        const mediaImg = document.createElement("img");
+        mediaImg.src = variantImageSrc;
+        mediaImg.alt = "";
+        mediaImg.className = "food-card-media-img";
+        variantMedia.appendChild(mediaImg);
+      } else {
+        variantMedia.textContent = getFoodEmoji(entry.baseName, category);
+      }
+
+      const title = document.createElement("h4");
+      title.className = "food-card-title";
+      title.textContent = entry.baseName;
+
+      if (isTandoorItemLabel(entry.baseName)) {
+        const tag = document.createElement("span");
+        tag.className = "food-card-tag";
+        tag.textContent = "Tandoor";
+        card.appendChild(tag);
+      }
+      if (isPeriPeriItemLabel(entry.baseName)) {
+        const tag = document.createElement("span");
+        tag.className = "food-card-tag food-card-tag-peri";
+        tag.textContent = "Peri Peri";
+        card.appendChild(tag);
+      }
+
+      const variantHint = document.createElement("p");
+      variantHint.className = "food-card-subtitle";
+      variantHint.textContent = getVariantHint(entry.variants);
+
+      const selectionSummary = document.createElement("p");
+      selectionSummary.className = "food-card-selection-summary";
+      selectionSummary.__variantMeta = entry.variants;
+      selectionSummary.textContent = buildVariantSelectionSummary(entry.variants);
+
+      const previewBtn = document.createElement("button");
+      previewBtn.type = "button";
+      previewBtn.className = "btn btn-secondary appetizer-preview-btn";
+      previewBtn.textContent = "Preview";
+      previewBtn.addEventListener("click", () => {
+        openVariantPreview(entry.baseName, entry.variants);
+      });
+
+      card.appendChild(variantMedia);
+      card.appendChild(title);
+      card.appendChild(variantHint);
+      card.appendChild(selectionSummary);
+      card.appendChild(previewBtn);
+      menuCarouselEl.appendChild(card);
+      return;
+    }
+
+    const item = entry.item;
     const hiddenInput = getHiddenInputForItemId(item.id);
     if (!hiddenInput) return;
 
     const card = document.createElement("article");
     card.className = "food-card";
+    if (isTandoorItemLabel(item.name)) {
+      card.classList.add("food-card-tandoor");
+    }
+    if (isPeriPeriItemLabel(item.name)) {
+      card.classList.add("food-card-peri");
+    }
+
+    const media = document.createElement("div");
+    media.className = "food-card-media";
+    const imageSrc = getFoodImageSource(item.name, category);
+    if (imageSrc) {
+      const mediaImg = document.createElement("img");
+      mediaImg.src = imageSrc;
+      mediaImg.alt = "";
+      mediaImg.className = "food-card-media-img";
+      media.appendChild(mediaImg);
+    } else {
+      media.textContent = getFoodEmoji(item.name, category);
+    }
 
     const title = document.createElement("h4");
     title.className = "food-card-title";
     title.textContent = item.name;
+
+    if (isTandoorItemLabel(item.name)) {
+      const tag = document.createElement("span");
+      tag.className = "food-card-tag";
+      tag.textContent = "Tandoor";
+      card.appendChild(tag);
+    }
+    if (isPeriPeriItemLabel(item.name)) {
+      const tag = document.createElement("span");
+      tag.className = "food-card-tag food-card-tag-peri";
+      tag.textContent = "Peri Peri";
+      card.appendChild(tag);
+    }
 
     const price = document.createElement("p");
     price.className = "food-card-price";
@@ -479,6 +821,7 @@ function renderCategoryItems(category) {
 
     const qtyValue = document.createElement("span");
     qtyValue.className = "food-qty-value";
+    qtyValue.dataset.itemId = String(item.id);
     qtyValue.textContent = String(Number(hiddenInput.value) || 0);
 
     const plusBtn = document.createElement("button");
@@ -487,21 +830,18 @@ function renderCategoryItems(category) {
     plusBtn.textContent = "+";
     plusBtn.setAttribute("aria-label", `Increase ${item.name}`);
 
-    const updateQty = (delta) => {
-      const current = Number(hiddenInput.value) || 0;
-      const next = Math.min(MAX_QTY_PER_ITEM, Math.max(0, current + delta));
-      hiddenInput.value = String(next);
-      qtyValue.textContent = String(next);
-      calculateTotal();
-    };
-
-    minusBtn.addEventListener("click", () => updateQty(-1));
-    plusBtn.addEventListener("click", () => updateQty(1));
+    minusBtn.addEventListener("click", () => {
+      changeMenuItemQty(item.id, -1);
+    });
+    plusBtn.addEventListener("click", () => {
+      changeMenuItemQty(item.id, 1);
+    });
 
     controls.appendChild(minusBtn);
     controls.appendChild(qtyValue);
     controls.appendChild(plusBtn);
 
+    card.appendChild(media);
     card.appendChild(title);
     card.appendChild(price);
     card.appendChild(controls);
@@ -516,15 +856,6 @@ function calculateTotal() {
   regularInputs.forEach((input) => {
     const quantity = Number(input.value) || 0;
     const price = Number(input.dataset.price) || 0;
-    if (quantity > 0) total += quantity * price;
-  });
-
-  const appetizerRows = menuContainer.querySelectorAll(".appetizer-row");
-  appetizerRows.forEach((row) => {
-    const qtyInput = row.querySelector(".appetizer-qty");
-    const checked = row.querySelector(".portion-radio:checked");
-    const quantity = Number(qtyInput?.value) || 0;
-    const price = Number(checked?.dataset.price) || 0;
     if (quantity > 0) total += quantity * price;
   });
 
@@ -558,34 +889,6 @@ function collectItems() {
     });
   });
 
-  const appetizerRows = menuContainer.querySelectorAll(".appetizer-row");
-  appetizerRows.forEach((row) => {
-    const qtyInput = row.querySelector(".appetizer-qty");
-    const checked = row.querySelector(".portion-radio:checked");
-    const quantity = Number(qtyInput?.value) || 0;
-    if (!checked || quantity <= 0) return;
-
-    const itemType = checked.dataset.itemType || "appetizer";
-    const groupId = Number(checked.dataset.groupId);
-    if (itemType === "appetizer" && Number.isInteger(groupId) && groupId > 0) {
-      items.push({
-        type: "appetizer",
-        group_id: groupId,
-        variant_id: Number(checked.value),
-        quantity
-      });
-      return;
-    }
-
-    const menuItemId = Number(checked.dataset.menuItemId || checked.value);
-    if (!Number.isInteger(menuItemId) || menuItemId <= 0) return;
-    items.push({
-      type: "menu_item",
-      menu_item_id: menuItemId,
-      quantity
-    });
-  });
-
   return items;
 }
 
@@ -593,22 +896,6 @@ function clearForm() {
   const inputs = menuContainer.querySelectorAll("input[type='number']");
   inputs.forEach((input) => {
     input.value = "0";
-    const qtyStepper = input.closest(".qty-stepper");
-    const valueEl = qtyStepper ? qtyStepper.querySelector(".qty-value") : null;
-    if (valueEl) valueEl.textContent = "0";
-  });
-
-  const radioGroups = new Set();
-  const radios = menuContainer.querySelectorAll(".portion-radio");
-  radios.forEach((radio) => {
-    if (radioGroups.has(radio.name)) return;
-    radioGroups.add(radio.name);
-    const first = menuContainer.querySelector(`.portion-radio[name="${radio.name}"]`);
-    if (first) first.checked = true;
-  });
-
-  menuContainer.querySelectorAll(".appetizer-row").forEach((row) => {
-    updateAppetizerRowPrice(row);
   });
 
   orderForm.querySelector("input[name='payment_mode'][value='cash']").checked = true;
@@ -643,7 +930,7 @@ function renderOrderCard(order) {
   const actions = document.createElement("div");
   actions.className = "order-actions";
 
-  if (nextStatus && buttonLabel) {
+  if (isAdminRole() && nextStatus && buttonLabel) {
     const actionBtn = document.createElement("button");
     actionBtn.className = "btn stage-btn";
     actionBtn.type = "button";
@@ -654,7 +941,7 @@ function renderOrderCard(order) {
     actions.appendChild(actionBtn);
   }
 
-  if (order.status === "queued") {
+  if (isAdminRole() && order.status === "queued") {
     const editBtn = document.createElement("button");
     editBtn.className = "btn edit-order-btn";
     editBtn.type = "button";
@@ -664,21 +951,15 @@ function renderOrderCard(order) {
     actions.appendChild(editBtn);
   }
 
-  const previewBtn = document.createElement("button");
-  previewBtn.className = "btn preview-order-btn";
-  previewBtn.type = "button";
-  previewBtn.textContent = "Expand";
-  previewBtn.dataset.action = "preview";
-  previewBtn.dataset.orderId = String(order.id);
-  actions.appendChild(previewBtn);
-
-  const deleteBtn = document.createElement("button");
-  deleteBtn.className = "btn btn-delete";
-  deleteBtn.type = "button";
-  deleteBtn.textContent = "Delete Order";
-  deleteBtn.dataset.action = "delete";
-  deleteBtn.dataset.orderId = String(order.id);
-  actions.appendChild(deleteBtn);
+  if (isAdminRole()) {
+    const deleteBtn = document.createElement("button");
+    deleteBtn.className = "btn btn-delete";
+    deleteBtn.type = "button";
+    deleteBtn.textContent = "Delete Order";
+    deleteBtn.dataset.action = "delete";
+    deleteBtn.dataset.orderId = String(order.id);
+    actions.appendChild(deleteBtn);
+  }
 
   const printBtn = document.createElement("button");
   printBtn.className = "btn btn-secondary";
@@ -688,64 +969,11 @@ function renderOrderCard(order) {
   printBtn.dataset.orderId = String(order.id);
   actions.appendChild(printBtn);
 
-  card.appendChild(actions);
-
-  card.addEventListener("touchstart", (event) => {
-    const touch = event.changedTouches?.[0];
-    if (!touch) return;
-    touchStartXByOrderId.set(order.id, touch.clientX);
-  });
-
-  card.addEventListener("touchend", (event) => {
-    if (window.matchMedia("(min-width: 769px)").matches) return;
-    const touch = event.changedTouches?.[0];
-    if (!touch) return;
-    const startX = touchStartXByOrderId.get(order.id);
-    touchStartXByOrderId.delete(order.id);
-    if (typeof startX !== "number") return;
-    const deltaX = touch.clientX - startX;
-    if (Math.abs(deltaX) >= 60) {
-      openOrderPreview(order);
-    }
-  });
+  if (actions.childElementCount > 0) {
+    card.appendChild(actions);
+  }
 
   return card;
-}
-
-function openOrderPreview(order) {
-  if (!orderPreviewModal || !orderPreviewBody) return;
-  const customer = order.customer_name ? escapeHtml(order.customer_name) : "Not provided";
-  const address = order.customer_address ? escapeHtml(order.customer_address) : "Not provided";
-  const notes = order.order_notes ? escapeHtml(order.order_notes) : "Not provided";
-  const items = (order.items || [])
-    .map((item) => `<li>${escapeHtml(item.name)} x ${item.quantity}</li>`)
-    .join("");
-
-  orderPreviewBody.innerHTML = `
-    <p><strong>Order:</strong> ${escapeHtml(getOrderCode(order))}</p>
-    <p><strong>Status:</strong> ${escapeHtml(order.status)}</p>
-    <p><strong>Payment:</strong> ${escapeHtml(String(order.payment_mode || "").toUpperCase())}</p>
-    <p><strong>Order Type:</strong> ${formatOrderType(order.order_type)}</p>
-    <p><strong>Total:</strong> ${formatCurrency(order.total_amount)}</p>
-    <p><strong>Time:</strong> ${formatTime(order.created_at, order.order_date)}</p>
-    <p><strong>Customer:</strong> ${customer}</p>
-    <p><strong>Address:</strong> ${address}</p>
-    <p><strong>Notes:</strong> ${notes}</p>
-    <div>
-      <strong>Items:</strong>
-      <ul class="order-items">${items}</ul>
-    </div>
-  `;
-
-  orderPreviewModal.classList.remove("hidden");
-  orderPreviewModal.setAttribute("aria-hidden", "false");
-}
-
-function closeOrderPreview() {
-  if (!orderPreviewModal || !orderPreviewBody) return;
-  orderPreviewModal.classList.add("hidden");
-  orderPreviewModal.setAttribute("aria-hidden", "true");
-  orderPreviewBody.innerHTML = "";
 }
 
 async function handleOrderCardAction(event) {
@@ -756,13 +984,6 @@ async function handleOrderCardAction(event) {
   if (!Number.isInteger(orderId) || orderId <= 0) return;
 
   try {
-    if (action === "preview") {
-      const selected = allOrders.find((item) => Number(item.id) === orderId);
-      if (selected) {
-        openOrderPreview(selected);
-      }
-      return;
-    }
     if (action === "edit") {
       await openEditOrderModal(orderId);
       return;
@@ -941,7 +1162,7 @@ async function openEditOrderModal(orderId) {
     throw new Error("Edit modal is unavailable. Please hard refresh the page.");
   }
 
-  const response = await fetch(`/orders/${orderId}`);
+  const response = await apiFetch(`/orders/${orderId}`);
   const raw = await response.text();
   let payload = {};
   try {
@@ -990,7 +1211,7 @@ async function saveOrderChanges() {
     };
   });
 
-  const response = await fetch(`/orders/${currentEditOrderId}/edit`, {
+  const response = await apiFetch(`/orders/${currentEditOrderId}/edit`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ items })
@@ -1097,14 +1318,14 @@ async function setBoardTab(tab) {
 }
 
 async function fetchMenu() {
-  const response = await fetch("/menu", { cache: "no-store" });
+  const response = await apiFetch("/menu", { cache: "no-store" });
   menuItems = await readJsonOrThrow(response, "Failed to fetch menu.");
   renderMenu();
 }
 
 async function fetchOrders(includeCompleted = false) {
   const endpoint = includeCompleted ? "/orders?includeCompleted=true" : "/orders";
-  const response = await fetch(endpoint, { cache: "no-store" });
+  const response = await apiFetch(endpoint, { cache: "no-store" });
   const fetchedOrders = await readJsonOrThrow(response, "Failed to fetch orders.");
 
   if (!includeCompleted) {
@@ -1138,7 +1359,8 @@ async function fetchOrders(includeCompleted = false) {
 }
 
 async function fetchStats() {
-  const response = await fetch("/stats", { cache: "no-store" });
+  if (!isAdminRole()) return;
+  const response = await apiFetch("/stats", { cache: "no-store" });
   const stats = await readJsonOrThrow(response, "Failed to fetch stats.");
   statOrders.textContent = String(stats.total_orders || 0);
   statCash.textContent = formatCurrency(stats.cash_total || 0);
@@ -1166,12 +1388,21 @@ async function createOrder(event) {
   const customerName = customerNameInput.value.trim();
   const customerAddress = customerAddressInput ? customerAddressInput.value.trim() : "";
   const orderNotes = orderNotesInput ? orderNotesInput.value.trim() : "";
+  if (customerName.length > MAX_CUSTOMER_NAME_LEN) {
+    throw new Error(`Customer name cannot exceed ${MAX_CUSTOMER_NAME_LEN} characters.`);
+  }
+  if (customerAddress.length > MAX_CUSTOMER_ADDRESS_LEN) {
+    throw new Error(`Customer address cannot exceed ${MAX_CUSTOMER_ADDRESS_LEN} characters.`);
+  }
+  if (orderNotes.length > MAX_ORDER_NOTES_LEN) {
+    throw new Error(`Order notes cannot exceed ${MAX_ORDER_NOTES_LEN} characters.`);
+  }
   const submitBtn = orderForm.querySelector("button[type='submit']");
 
   createOrderInProgress = true;
   if (submitBtn) submitBtn.disabled = true;
   try {
-    const response = await fetch("/orders", {
+    const response = await apiFetch("/orders", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1191,8 +1422,8 @@ async function createOrder(event) {
     renderBoards();
     showMessage(`Order created successfully. ${getOrderCode(payload)}`, "success");
     clearForm();
+    if (orderFoldEl) orderFoldEl.open = true;
     fetchStats().catch(() => {});
-    printInvoice(payload.id).catch(() => {});
   } finally {
     createOrderInProgress = false;
     if (submitBtn) submitBtn.disabled = false;
@@ -1208,7 +1439,7 @@ async function updateStatus(orderId, status) {
     renderBoards();
   }
 
-  const response = await fetch(`/orders/${orderId}/status`, {
+  const response = await apiFetch(`/orders/${orderId}/status`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ status })
@@ -1233,7 +1464,7 @@ async function resetDay() {
   const confirmed = window.confirm("Reset current day orders? This cannot be undone.");
   if (!confirmed) return;
 
-  const response = await fetch("/reset-day", { method: "POST" });
+  const response = await apiFetch("/reset-day", { method: "POST" });
   const payload = await readJsonOrThrow(response, "Failed to reset day.");
 
   allOrders = [];
@@ -1253,7 +1484,7 @@ async function deleteOrder(orderId) {
   }
   if (!pin) return;
 
-  const response = await fetch(`/orders/${orderId}`, {
+  const response = await apiFetch(`/orders/${orderId}`, {
     method: "DELETE",
     headers: { "x-admin-pin": pin }
   });
@@ -1291,7 +1522,11 @@ async function refreshDashboard() {
   refreshInProgress = true;
   try {
     const includeCompleted = currentBoardTab === "completed";
-    await Promise.all([fetchOrders(includeCompleted), fetchStats()]);
+    if (isAdminRole()) {
+      await Promise.all([fetchOrders(includeCompleted), fetchStats()]);
+    } else {
+      await fetchOrders(includeCompleted);
+    }
     if (includeCompleted) {
       lastCompletedFetchAt = Date.now();
     }
@@ -1301,6 +1536,10 @@ async function refreshDashboard() {
 }
 
 async function fetchDailyCloseReport() {
+  if (!isAdminRole()) {
+    showMessage("Access denied.", "error");
+    return;
+  }
   const url = "/reports/daily-close/pdf";
   openUrlInNewTabOnly(url);
 }
@@ -1327,7 +1566,7 @@ async function printInvoice(orderId) {
     throw new Error("Invalid Order ID.");
   }
 
-  const response = await fetch(`/orders/${id}`, { cache: "no-store" });
+  const response = await apiFetch(`/orders/${id}`, { cache: "no-store" });
   const order = await readJsonOrThrow(response, "Failed to fetch order for invoice.");
 
   const code = escapeHtml(getOrderCode(order));
@@ -1446,12 +1685,73 @@ function connectRealtimeEvents() {
 }
 
 async function verifyBackendHealth() {
-  const response = await fetch("/health", { cache: "no-store" });
+  const response = await apiFetch("/health", { cache: "no-store" });
   await readJsonOrThrow(response, "Backend health check failed.");
 }
 
 async function init() {
   try {
+    applyRoleBasedUi();
+
+    if (logoutBtn) {
+      logoutBtn.addEventListener("click", async () => {
+        await handleLogout();
+      });
+    }
+
+    if (userMenuBtn) {
+      userMenuBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const nextState = userMenuDropdown?.classList.contains("hidden");
+        setUserMenuOpen(Boolean(nextState));
+      });
+    }
+
+    document.addEventListener("click", (event) => {
+      if (!userMenuDropdown || !userMenuBtn) return;
+      const insideMenu = userMenuDropdown.contains(event.target) || userMenuBtn.contains(event.target);
+      if (!insideMenu) {
+        setUserMenuOpen(false);
+      }
+    });
+
+    try {
+      await fetchCurrentUser();
+      applyRoleBasedUi();
+    } catch (error) {
+      if (String(error.message || "").toLowerCase().includes("unauthorized")) {
+        window.location.replace("/login");
+        return;
+      }
+      throw error;
+    }
+
+    if (manageUsersLink && !isAdminRole()) {
+      manageUsersLink.classList.add("hidden");
+    }
+    if (manageUsersLink && isAdminRole()) {
+      manageUsersLink.classList.remove("hidden");
+    }
+
+    if (userMenuDropdown) {
+      userMenuDropdown.addEventListener("click", () => {
+        setUserMenuOpen(false);
+      });
+    }
+
+    if (!isAdminRole()) {
+      if (dailyCloseReportBtn) dailyCloseReportBtn.classList.add("hidden");
+      if (resetDayBtn) resetDayBtn.classList.add("hidden");
+    } else {
+      if (dailyCloseReportBtn) dailyCloseReportBtn.classList.remove("hidden");
+      if (resetDayBtn) resetDayBtn.classList.remove("hidden");
+    }
+
+    if (!currentUser) {
+      window.location.replace("/login");
+      return;
+    }
+
     await Promise.all([fetchMenu(), refreshDashboard()]);
     connectRealtimeEvents();
 
@@ -1501,6 +1801,10 @@ async function init() {
     }
 
     resetDayBtn.addEventListener("click", async () => {
+      if (!isAdminRole()) {
+        showMessage("Access denied.", "error");
+        return;
+      }
       try {
         await resetDay();
       } catch (error) {
@@ -1513,7 +1817,7 @@ async function init() {
       showMessage("Cart cleared.", "success");
     });
 
-    if (dailyCloseReportBtn) {
+    if (dailyCloseReportBtn && isAdminRole()) {
       dailyCloseReportBtn.addEventListener("click", async () => {
         try {
           await fetchDailyCloseReport();
@@ -1570,16 +1874,16 @@ async function init() {
       });
     }
 
-    if (closePreviewModalBtn) {
-      closePreviewModalBtn.addEventListener("click", () => {
-        closeOrderPreview();
+    if (closeFoodPreviewModalBtn) {
+      closeFoodPreviewModalBtn.addEventListener("click", () => {
+        closeFoodPreviewModal();
       });
     }
 
-    if (orderPreviewModal) {
-      orderPreviewModal.addEventListener("click", (event) => {
-        if (event.target === orderPreviewModal) {
-          closeOrderPreview();
+    if (foodPreviewModal) {
+      foodPreviewModal.addEventListener("click", (event) => {
+        if (event.target === foodPreviewModal) {
+          closeFoodPreviewModal();
         }
       });
     }

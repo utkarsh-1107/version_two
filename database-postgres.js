@@ -29,6 +29,13 @@ const pool = new Pool({
   ssl: useSSL ? { rejectUnauthorized: false } : false
 });
 const MAX_QTY_PER_ITEM = 10;
+const MAX_CUSTOMER_NAME_LEN = 75;
+const MAX_CUSTOMER_ADDRESS_LEN = 255;
+const MAX_ORDER_NOTES_LEN = 75;
+const usersSeed = [
+  { name: "Admin", username: "admin", password: "admin", role: "admin" },
+  { name: "User", username: "user", password: "user", role: "user" }
+];
 
 async function query(sql, params = []) {
   return pool.query(sql, params);
@@ -222,6 +229,22 @@ function normalizeOrderRow(order) {
 
 async function initDatabase() {
   await run(`
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      username TEXT,
+      password TEXT,
+      role TEXT NOT NULL CHECK(role IN ('admin', 'user')),
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await run("ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT");
+  await run("ALTER TABLE users ADD COLUMN IF NOT EXISTS password TEXT");
+  await run("CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)");
+  await run("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_unique ON users(username)");
+  await run("DROP INDEX IF EXISTS idx_users_role_unique");
+
+  await run(`
     CREATE TABLE IF NOT EXISTS categories (
       id SERIAL PRIMARY KEY,
       name TEXT NOT NULL UNIQUE
@@ -265,6 +288,7 @@ async function initDatabase() {
       customer_name TEXT,
       customer_address TEXT,
       order_notes TEXT,
+      created_by_user_id INTEGER REFERENCES users(id),
       status TEXT NOT NULL CHECK(status IN ('queued', 'preparing', 'ready', 'completed')),
       created_at TIMESTAMP NOT NULL,
       order_date DATE NOT NULL
@@ -275,6 +299,7 @@ async function initDatabase() {
   await run("ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_date DATE");
   await run("ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_address TEXT");
   await run("ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_notes TEXT");
+  await run("ALTER TABLE orders ADD COLUMN IF NOT EXISTS created_by_user_id INTEGER REFERENCES users(id)");
   await run("UPDATE orders SET order_date = DATE(created_at) WHERE order_date IS NULL");
   await run("ALTER TABLE orders ALTER COLUMN order_date SET NOT NULL");
 
@@ -309,6 +334,43 @@ async function initDatabase() {
 
   await run("BEGIN");
   try {
+    for (const user of usersSeed) {
+      await run(
+        "INSERT INTO users (name, username, password, role) VALUES ($1, $2, $3, $4) ON CONFLICT (username) DO NOTHING",
+        [user.name, user.username, user.password, user.role]
+      );
+      await run("UPDATE users SET password = $1 WHERE username = $2", [user.password, user.username]);
+    }
+    const existingUsers = await all("SELECT id, role, username, password FROM users ORDER BY id ASC");
+    const usedUsernames = new Set(
+      existingUsers
+        .map((entry) => String(entry.username || "").trim().toLowerCase())
+        .filter(Boolean)
+    );
+    for (const entry of existingUsers) {
+      const currentUsername = String(entry.username || "").trim().toLowerCase();
+      if (!currentUsername) {
+        const base = String(entry.role || "user").trim().toLowerCase() === "admin" ? "admin" : "user";
+        let candidate = base;
+        let counter = 1;
+        while (usedUsernames.has(candidate)) {
+          candidate = `${base}${counter}`;
+          counter += 1;
+        }
+        usedUsernames.add(candidate);
+        await run("UPDATE users SET username = $1 WHERE id = $2", [candidate, entry.id]);
+      }
+      const currentPassword = String(entry.password || "").trim();
+      if (!currentPassword) {
+        const userRow = await get("SELECT username FROM users WHERE id = $1", [entry.id]);
+        await run("UPDATE users SET password = $1 WHERE id = $2", [String(userRow?.username || "user"), entry.id]);
+      }
+    }
+    const adminUser = await get("SELECT id FROM users WHERE role = 'admin' ORDER BY id ASC LIMIT 1");
+    if (adminUser?.id) {
+      await run("UPDATE orders SET created_by_user_id = $1 WHERE created_by_user_id IS NULL", [adminUser.id]);
+    }
+
     const oldHotdogsCategory = await get("SELECT id FROM categories WHERE name = 'Hotdogs'");
     const newHotDogsCategory = await get("SELECT id FROM categories WHERE name = 'Hot Dogs'");
     if (oldHotdogsCategory && !newHotDogsCategory) {
@@ -483,7 +545,7 @@ async function getAppetizers() {
 
 async function fetchOrderRows(includeCompleted = false) {
   let sql = `
-    SELECT id, token_number, total_amount, payment_mode, order_type, customer_name, customer_address, order_notes, status, created_at, order_date
+    SELECT id, token_number, total_amount, payment_mode, order_type, customer_name, customer_address, order_notes, status, created_at, order_date, created_by_user_id
     FROM orders
     WHERE order_date = $1
   `;
@@ -559,7 +621,7 @@ async function getOrders(includeCompleted = false) {
 async function getOrderById(orderId) {
   const row = await get(
     `
-    SELECT id, token_number, total_amount, payment_mode, order_type, customer_name, customer_address, order_notes, status, created_at, order_date
+    SELECT id, token_number, total_amount, payment_mode, order_type, customer_name, customer_address, order_notes, status, created_at, order_date, created_by_user_id
     FROM orders
     WHERE id = $1
     `,
@@ -571,7 +633,15 @@ async function getOrderById(orderId) {
 }
 
 async function createOrder(
-  { items, payment_mode, order_type = "dine_in", customer_name = "", customer_address = "", order_notes = "" },
+  {
+    items,
+    payment_mode,
+    order_type = "dine_in",
+    customer_name = "",
+    customer_address = "",
+    order_notes = "",
+    created_by_user_id = null
+  },
   retriesLeft = 2
 ) {
   if (!Array.isArray(items) || items.length === 0) {
@@ -584,9 +654,19 @@ async function createOrder(
     throw new Error("Invalid order type.");
   }
 
-  const cleanCustomerName = String(customer_name || "").trim().slice(0, 80);
-  const cleanCustomerAddress = String(customer_address || "").trim().slice(0, 240);
-  const cleanOrderNotes = String(order_notes || "").trim().slice(0, 500);
+  const cleanCustomerName = String(customer_name || "").trim();
+  const cleanCustomerAddress = String(customer_address || "").trim();
+  const cleanOrderNotes = String(order_notes || "").trim();
+
+  if (cleanCustomerName.length > MAX_CUSTOMER_NAME_LEN) {
+    throw new Error(`Customer name must be at most ${MAX_CUSTOMER_NAME_LEN} characters.`);
+  }
+  if (cleanCustomerAddress.length > MAX_CUSTOMER_ADDRESS_LEN) {
+    throw new Error(`Customer address must be at most ${MAX_CUSTOMER_ADDRESS_LEN} characters.`);
+  }
+  if (cleanOrderNotes.length > MAX_ORDER_NOTES_LEN) {
+    throw new Error(`Order notes must be at most ${MAX_ORDER_NOTES_LEN} characters.`);
+  }
 
   await run("BEGIN");
   try {
@@ -679,8 +759,8 @@ async function createOrder(
 
     const insertOrder = await get(
       `
-      INSERT INTO orders (token_number, total_amount, payment_mode, order_type, customer_name, customer_address, order_notes, status, created_at, order_date)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      INSERT INTO orders (token_number, total_amount, payment_mode, order_type, customer_name, customer_address, order_notes, created_by_user_id, status, created_at, order_date)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       RETURNING id
       `,
       [
@@ -691,6 +771,7 @@ async function createOrder(
         cleanCustomerName || null,
         cleanCustomerAddress || null,
         cleanOrderNotes || null,
+        Number.isInteger(Number(created_by_user_id)) ? Number(created_by_user_id) : null,
         "queued",
         createdAt,
         orderDate
@@ -726,6 +807,7 @@ async function createOrder(
         customer_name: cleanCustomerName || null,
         customer_address: cleanCustomerAddress || null,
         order_notes: cleanOrderNotes || null,
+        created_by_user_id: Number.isInteger(Number(created_by_user_id)) ? Number(created_by_user_id) : null,
         status: "queued",
         created_at: createdAt,
         order_date: orderDate
@@ -740,7 +822,10 @@ async function createOrder(
       error.code === "23505" &&
       error.constraint === "idx_orders_daily_token_unique"
     ) {
-      return createOrder({ items, payment_mode, order_type, customer_name, customer_address, order_notes }, retriesLeft - 1);
+      return createOrder(
+        { items, payment_mode, order_type, customer_name, customer_address, order_notes, created_by_user_id },
+        retriesLeft - 1
+      );
     }
     throw error;
   }
@@ -755,7 +840,7 @@ async function updateOrderStatus(orderId, nextStatus) {
 
   const row = await get(
     `
-    SELECT id, token_number, total_amount, payment_mode, order_type, customer_name, customer_address, order_notes, status, created_at, order_date
+    SELECT id, token_number, total_amount, payment_mode, order_type, customer_name, customer_address, order_notes, status, created_at, order_date, created_by_user_id
     FROM orders
     WHERE id = $1
     `,
@@ -763,6 +848,104 @@ async function updateOrderStatus(orderId, nextStatus) {
   );
   const [full] = await attachOrderItems([row]);
   return full;
+}
+
+async function getUserById(userId) {
+  const id = Number(userId);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  return get("SELECT id, name, username, role, created_at FROM users WHERE id = $1", [id]);
+}
+
+async function getUserByUsername(username) {
+  const clean = String(username || "").trim().toLowerCase();
+  if (!clean) return null;
+  return get("SELECT id, name, username, password, role, created_at FROM users WHERE username = $1", [clean]);
+}
+
+async function getUsers() {
+  return all(
+    "SELECT id, name, username, role, created_at FROM users ORDER BY CASE WHEN role = 'admin' THEN 0 ELSE 1 END, id ASC"
+  );
+}
+
+async function createUser({ name = "", username = "", password = "", role = "user" }) {
+  const cleanUsername = String(username || "").trim().toLowerCase();
+  const cleanPassword = String(password || "").trim();
+  const cleanRole = String(role || "").trim().toLowerCase() === "admin" ? "admin" : "user";
+  const cleanName = String(name || "").trim() || cleanUsername;
+  if (!cleanUsername) throw new Error("Username is required.");
+  if (!/^[a-z0-9_.-]{3,32}$/.test(cleanUsername)) {
+    throw new Error("Username must be 3-32 chars (a-z, 0-9, ., _, -).");
+  }
+  if (cleanPassword.length < 3 || cleanPassword.length > 64) {
+    throw new Error("Password must be between 3 and 64 characters.");
+  }
+  const existing = await get("SELECT id FROM users WHERE username = $1", [cleanUsername]);
+  if (existing) throw new Error("Username already exists.");
+  return get(
+    "INSERT INTO users (name, username, password, role) VALUES ($1, $2, $3, $4) RETURNING id, name, username, role, created_at",
+    [cleanName, cleanUsername, cleanPassword, cleanRole]
+  );
+}
+
+async function updateUser(userId, { name, role, password }) {
+  const id = Number(userId);
+  if (!Number.isInteger(id) || id <= 0) throw new Error("Invalid user id.");
+  const existing = await get("SELECT id, role FROM users WHERE id = $1", [id]);
+  if (!existing) return null;
+
+  const updates = [];
+  const params = [];
+  let idx = 1;
+  if (typeof name === "string") {
+    const cleanName = String(name).trim();
+    if (cleanName) {
+      updates.push(`name = $${idx++}`);
+      params.push(cleanName);
+    }
+  }
+  if (typeof role === "string") {
+    const cleanRole = String(role).trim().toLowerCase() === "admin" ? "admin" : "user";
+    if (existing.role === "admin" && cleanRole !== "admin") {
+      const adminCount = await get("SELECT COUNT(*) AS count FROM users WHERE role = 'admin'");
+      if (Number(adminCount?.count || 0) <= 1) {
+        throw new Error("At least one admin user is required.");
+      }
+    }
+    updates.push(`role = $${idx++}`);
+    params.push(cleanRole);
+  }
+  if (typeof password === "string" && String(password).trim()) {
+    const cleanPassword = String(password).trim();
+    if (cleanPassword.length < 3 || cleanPassword.length > 64) {
+      throw new Error("Password must be between 3 and 64 characters.");
+    }
+    updates.push(`password = $${idx++}`);
+    params.push(cleanPassword);
+  }
+  if (updates.length === 0) return getUserById(id);
+  params.push(id);
+  await run(`UPDATE users SET ${updates.join(", ")} WHERE id = $${idx}`, params);
+  return getUserById(id);
+}
+
+async function deleteUser(userId, actorUserId = null) {
+  const id = Number(userId);
+  const actorId = Number(actorUserId);
+  if (!Number.isInteger(id) || id <= 0) throw new Error("Invalid user id.");
+  if (Number.isInteger(actorId) && actorId > 0 && actorId === id) {
+    throw new Error("You cannot delete your own account.");
+  }
+  const existing = await get("SELECT id, role FROM users WHERE id = $1", [id]);
+  if (!existing) return false;
+  if (existing.role === "admin") {
+    const adminCount = await get("SELECT COUNT(*) AS count FROM users WHERE role = 'admin'");
+    if (Number(adminCount?.count || 0) <= 1) {
+      throw new Error("At least one admin user is required.");
+    }
+  }
+  const result = await run("DELETE FROM users WHERE id = $1", [id]);
+  return result.rowCount > 0;
 }
 
 async function getStats() {
@@ -985,6 +1168,12 @@ async function editOrder(orderId, items) {
 
 module.exports = {
   initDatabase,
+  getUserById,
+  getUserByUsername,
+  getUsers,
+  createUser,
+  updateUser,
+  deleteUser,
   getMenu,
   getAppetizers,
   getOrders,
