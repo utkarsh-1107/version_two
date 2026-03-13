@@ -55,6 +55,8 @@ const MAX_QTY_PER_ITEM = 10;
 const MAX_CUSTOMER_NAME_LEN = 75;
 const MAX_CUSTOMER_ADDRESS_LEN = 255;
 const MAX_ORDER_NOTES_LEN = 75;
+const MENU_CACHE_KEY = "food_pos_menu_cache_v1";
+const MENU_CACHE_TTL_MS = 5 * 60 * 1000;
 let menuItems = [];
 let allOrders = [];
 let currentBoardTab = "active";
@@ -237,6 +239,48 @@ async function readJsonOrThrow(response, fallbackMessage) {
   }
 
   return payload;
+}
+
+function readMenuCache() {
+  try {
+    const raw = sessionStorage.getItem(MENU_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const savedAt = Number(parsed?.savedAt || 0);
+    const items = Array.isArray(parsed?.items) ? parsed.items : null;
+    if (!items || !savedAt) return null;
+    if (Date.now() - savedAt > MENU_CACHE_TTL_MS) return null;
+    return items;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function writeMenuCache(items) {
+  try {
+    if (!Array.isArray(items)) return;
+    sessionStorage.setItem(
+      MENU_CACHE_KEY,
+      JSON.stringify({
+        savedAt: Date.now(),
+        items
+      })
+    );
+  } catch (_error) {
+    // ignore storage/private mode errors
+  }
+}
+
+function applyMenuItems(items) {
+  menuItems = Array.isArray(items) ? items : [];
+  renderMenu();
+}
+
+function restoreMenuFromCache() {
+  const cachedItems = readMenuCache();
+  if (!cachedItems) return false;
+  applyMenuItems(cachedItems);
+  return true;
 }
 
 function getNextStatus(status) {
@@ -1319,8 +1363,9 @@ async function setBoardTab(tab) {
 
 async function fetchMenu() {
   const response = await apiFetch("/menu", { cache: "no-store" });
-  menuItems = await readJsonOrThrow(response, "Failed to fetch menu.");
-  renderMenu();
+  const items = await readJsonOrThrow(response, "Failed to fetch menu.");
+  applyMenuItems(items);
+  writeMenuCache(items);
 }
 
 async function fetchOrders(includeCompleted = false) {
@@ -1673,11 +1718,6 @@ function connectRealtimeEvents() {
   };
 }
 
-async function verifyBackendHealth() {
-  const response = await apiFetch("/health", { cache: "no-store" });
-  await readJsonOrThrow(response, "Backend health check failed.");
-}
-
 async function init() {
   try {
     applyRoleBasedUi();
@@ -1741,7 +1781,20 @@ async function init() {
       return;
     }
 
-    await Promise.all([fetchMenu(), refreshDashboard()]);
+    const hasWarmMenu = restoreMenuFromCache();
+    const dashboardPromise = refreshDashboard().catch((error) => {
+      showMessage(error.message, "error");
+    });
+
+    if (hasWarmMenu) {
+      fetchMenu().catch((error) => {
+        showMessage(error.message, "error");
+      });
+    } else {
+      await fetchMenu();
+    }
+
+    await dashboardPromise;
     connectRealtimeEvents();
 
     orderForm.addEventListener("submit", async (event) => {
