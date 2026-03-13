@@ -309,6 +309,20 @@ function isPeriPeriItemLabel(label = "") {
   return text.includes("peri peri") || text.includes("peri-peri") || text.includes("piri piri") || text.includes("piri-piri");
 }
 
+function isCheeseItemLabel(label = "") {
+  const text = String(label || "").toLowerCase();
+  return text.includes("cheese");
+}
+
+function getCornerAccentType(label = "") {
+  const hasPeri = isPeriPeriItemLabel(label);
+  const hasCheese = isCheeseItemLabel(label);
+  if (hasPeri && hasCheese) return "peri-cheese";
+  if (hasPeri) return "peri";
+  if (hasCheese) return "cheese";
+  return "";
+}
+
 function parsePortionVariant(itemName) {
   const match = String(itemName || "").trim().match(/^(.*)\s-\s(mini|half|full|quarter|[0-9]+\s*pcs?)$/i);
   if (!match) return null;
@@ -699,10 +713,10 @@ function renderCategoryItems(category) {
       if (isTandoorItemLabel(entry.baseName)) {
         card.classList.add("food-card-tandoor");
       }
-      if (isPeriPeriItemLabel(entry.baseName)) {
-        card.classList.add("food-card-peri");
+      const accentType = getCornerAccentType(entry.baseName);
+      if (accentType) {
+        card.classList.add("food-card-corner-accent", `food-card-corner-${accentType}`);
       }
-
       const variantMedia = document.createElement("div");
       variantMedia.className = "food-card-media";
       const selectedVariant = getDefaultVariantForGroup(entry.variants);
@@ -729,13 +743,6 @@ function renderCategoryItems(category) {
         tag.textContent = "Tandoor";
         card.appendChild(tag);
       }
-      if (isPeriPeriItemLabel(entry.baseName)) {
-        const tag = document.createElement("span");
-        tag.className = "food-card-tag food-card-tag-peri";
-        tag.textContent = "Peri Peri";
-        card.appendChild(tag);
-      }
-
       const variantHint = document.createElement("p");
       variantHint.className = "food-card-subtitle";
       variantHint.textContent = getVariantHint(entry.variants);
@@ -771,8 +778,9 @@ function renderCategoryItems(category) {
     if (isTandoorItemLabel(item.name)) {
       card.classList.add("food-card-tandoor");
     }
-    if (isPeriPeriItemLabel(item.name)) {
-      card.classList.add("food-card-peri");
+    const accentType = getCornerAccentType(item.name);
+    if (accentType) {
+      card.classList.add("food-card-corner-accent", `food-card-corner-${accentType}`);
     }
 
     const media = document.createElement("div");
@@ -798,13 +806,6 @@ function renderCategoryItems(category) {
       tag.textContent = "Tandoor";
       card.appendChild(tag);
     }
-    if (isPeriPeriItemLabel(item.name)) {
-      const tag = document.createElement("span");
-      tag.className = "food-card-tag food-card-tag-peri";
-      tag.textContent = "Peri Peri";
-      card.appendChild(tag);
-    }
-
     const price = document.createElement("p");
     price.className = "food-card-price";
     price.textContent = formatCurrency(item.price);
