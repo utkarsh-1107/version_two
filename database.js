@@ -147,6 +147,28 @@ const legacyNameMigrations = [
   { oldName: "Cheese Tandoori Sub", newName: "Cheese Tandoori Sub Sandwich" }
 ];
 
+function toSqliteBool(value, defaultValue = 0) {
+  if (value === undefined || value === null || value === "") return defaultValue ? 1 : 0;
+  if (typeof value === "boolean") return value ? 1 : 0;
+  if (typeof value === "number") return value > 0 ? 1 : 0;
+  const normalized = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return 1;
+  if (["0", "false", "no", "off"].includes(normalized)) return 0;
+  return defaultValue ? 1 : 0;
+}
+
+function inferFlagsFromName(name = "") {
+  const text = String(name || "").toLowerCase();
+  const isPeriPeri =
+    text.includes("peri peri") ||
+    text.includes("peri-peri") ||
+    text.includes("piri piri") ||
+    text.includes("piri-peri");
+  const hasCheese = text.includes("cheese");
+  const isTandoori = text.includes("tandoori") || text.includes("tandoor");
+  return { isPeriPeri, hasCheese, isTandoori };
+}
+
 function toINDateTime(date = new Date()) {
   const options = {
     timeZone: "Asia/Kolkata",
@@ -280,6 +302,32 @@ async function migrateOrderItemsTable() {
   }
 }
 
+async function migrateMenuItemsTable() {
+  const exists = await get(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'menu_items'"
+  );
+  if (!exists) return;
+
+  if (!(await hasColumn("menu_items", "description"))) {
+    await run("ALTER TABLE menu_items ADD COLUMN description TEXT");
+  }
+  if (!(await hasColumn("menu_items", "image_path"))) {
+    await run("ALTER TABLE menu_items ADD COLUMN image_path TEXT");
+  }
+  if (!(await hasColumn("menu_items", "is_peri_peri"))) {
+    await run("ALTER TABLE menu_items ADD COLUMN is_peri_peri INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!(await hasColumn("menu_items", "has_cheese"))) {
+    await run("ALTER TABLE menu_items ADD COLUMN has_cheese INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!(await hasColumn("menu_items", "is_tandoori"))) {
+    await run("ALTER TABLE menu_items ADD COLUMN is_tandoori INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!(await hasColumn("menu_items", "in_stock"))) {
+    await run("ALTER TABLE menu_items ADD COLUMN in_stock INTEGER NOT NULL DEFAULT 1");
+  }
+}
+
 async function initDatabase() {
   if (READ_ONLY) return;
   await run(`
@@ -316,6 +364,12 @@ async function initDatabase() {
       name TEXT NOT NULL,
       price REAL NOT NULL CHECK(price >= 0),
       prep_time_minutes INTEGER NOT NULL CHECK(prep_time_minutes >= 0),
+      description TEXT,
+      image_path TEXT,
+      is_peri_peri INTEGER NOT NULL DEFAULT 0 CHECK(is_peri_peri IN (0, 1)),
+      has_cheese INTEGER NOT NULL DEFAULT 0 CHECK(has_cheese IN (0, 1)),
+      is_tandoori INTEGER NOT NULL DEFAULT 0 CHECK(is_tandoori IN (0, 1)),
+      in_stock INTEGER NOT NULL DEFAULT 1 CHECK(in_stock IN (0, 1)),
       FOREIGN KEY(category_id) REFERENCES categories(id)
     )
   `);
@@ -376,6 +430,7 @@ async function initDatabase() {
   `);
 
   await migrateOrderItemsTable();
+  await migrateMenuItemsTable();
 
   await run("CREATE INDEX IF NOT EXISTS idx_menu_items_category_id ON menu_items(category_id)");
   await run("CREATE UNIQUE INDEX IF NOT EXISTS idx_menu_items_unique_name_per_category ON menu_items(category_id, name)");
@@ -463,6 +518,7 @@ async function initDatabase() {
     );
 
     for (const item of menuSeed) {
+      const inferredFlags = inferFlagsFromName(item.name);
       const existing = await get(
         `
         SELECT mi.id
@@ -484,8 +540,25 @@ async function initDatabase() {
         );
       } else {
         await run(
-          "INSERT INTO menu_items (category_id, name, price, prep_time_minutes) VALUES (?, ?, ?, ?)",
-          [categoryMap.get(item.category), item.name, item.price, item.prep_time_minutes]
+          `
+          INSERT INTO menu_items (
+            category_id, name, price, prep_time_minutes, description, image_path,
+            is_peri_peri, has_cheese, is_tandoori, in_stock
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `,
+          [
+            categoryMap.get(item.category),
+            item.name,
+            item.price,
+            item.prep_time_minutes,
+            null,
+            null,
+            inferredFlags.isPeriPeri ? 1 : 0,
+            inferredFlags.hasCheese ? 1 : 0,
+            inferredFlags.isTandoori ? 1 : 0,
+            1
+          ]
         );
       }
     }
@@ -529,7 +602,9 @@ async function initDatabase() {
 async function getMenu() {
   return all(
     `
-    SELECT id, name, price, prep_time_minutes, category, type, group_id, variant_id
+    SELECT
+      id, name, price, prep_time_minutes, category, type, group_id, variant_id,
+      description, image_path, is_peri_peri, has_cheese, is_tandoori, in_stock
     FROM (
       SELECT
         CAST(mi.id AS TEXT) AS id,
@@ -540,6 +615,12 @@ async function getMenu() {
         'menu_item' AS type,
         NULL AS group_id,
         NULL AS variant_id,
+        COALESCE(mi.description, '') AS description,
+        mi.image_path,
+        COALESCE(mi.is_peri_peri, 0) AS is_peri_peri,
+        COALESCE(mi.has_cheese, 0) AS has_cheese,
+        COALESCE(mi.is_tandoori, 0) AS is_tandoori,
+        COALESCE(mi.in_stock, 1) AS in_stock,
         c.id AS category_sort,
         mi.id AS item_sort
       FROM menu_items mi
@@ -557,6 +638,15 @@ async function getMenu() {
         'appetizer' AS type,
         ag.id AS group_id,
         av.id AS variant_id,
+        '' AS description,
+        NULL AS image_path,
+        CASE
+          WHEN lower(ag.name) LIKE '%peri peri%' OR lower(ag.name) LIKE '%peri-peri%' OR lower(ag.name) LIKE '%piri piri%' OR lower(ag.name) LIKE '%piri-peri%'
+          THEN 1 ELSE 0
+        END AS is_peri_peri,
+        CASE WHEN lower(ag.name) LIKE '%cheese%' THEN 1 ELSE 0 END AS has_cheese,
+        CASE WHEN lower(ag.name) LIKE '%tandoori%' OR lower(ag.name) LIKE '%tandoor%' THEN 1 ELSE 0 END AS is_tandoori,
+        1 AS in_stock,
         1 AS category_sort,
         av.id AS item_sort
       FROM appetizer_variants av
@@ -565,6 +655,255 @@ async function getMenu() {
     ORDER BY t.category_sort ASC, t.item_sort ASC
     `
   );
+}
+
+async function getMenuManagementItems() {
+  return all(
+    `
+    SELECT
+      mi.id,
+      mi.name,
+      mi.price,
+      mi.prep_time_minutes,
+      COALESCE(mi.description, '') AS description,
+      mi.image_path,
+      COALESCE(mi.is_peri_peri, 0) AS is_peri_peri,
+      COALESCE(mi.has_cheese, 0) AS has_cheese,
+      COALESCE(mi.is_tandoori, 0) AS is_tandoori,
+      COALESCE(mi.in_stock, 1) AS in_stock,
+      c.id AS category_id,
+      c.name AS category
+    FROM menu_items mi
+    INNER JOIN categories c ON c.id = mi.category_id
+    WHERE c.name != 'Appetizers'
+    ORDER BY c.id ASC, mi.id ASC
+    `
+  );
+}
+
+async function createMenuItem(payload = {}) {
+  const categoryId = Number(payload.category_id);
+  const categoryName = String(payload.category || "").trim();
+  const name = String(payload.name || "").trim();
+  const description = String(payload.description || "").trim();
+  const price = Number(payload.price);
+  const prepTime = Number(payload.prep_time_minutes || 0);
+  const imagePath = payload.image_path ? String(payload.image_path).trim() : null;
+
+  if (!name) throw new Error("Item name is required.");
+  if (!Number.isFinite(price) || price < 0) throw new Error("Price must be a valid non-negative number.");
+  if (!Number.isInteger(prepTime) || prepTime < 0) throw new Error("Prep time must be a non-negative integer.");
+
+  let resolvedCategoryId = Number.isInteger(categoryId) && categoryId > 0 ? categoryId : null;
+  if (!resolvedCategoryId && categoryName) {
+    const categoryRow = await get("SELECT id FROM categories WHERE name = ?", [categoryName]);
+    resolvedCategoryId = Number(categoryRow?.id || 0) || null;
+  }
+  if (!resolvedCategoryId) throw new Error("Valid category is required.");
+
+  const category = await get("SELECT id, name FROM categories WHERE id = ?", [resolvedCategoryId]);
+  if (!category || category.name === "Appetizers") {
+    throw new Error("Menu management supports non-appetizer categories only.");
+  }
+
+  const inferredFlags = inferFlagsFromName(name);
+  const isPeriPeri = toSqliteBool(payload.is_peri_peri, inferredFlags.isPeriPeri ? 1 : 0);
+  const hasCheese = toSqliteBool(payload.has_cheese, inferredFlags.hasCheese ? 1 : 0);
+  const isTandoori = toSqliteBool(payload.is_tandoori, inferredFlags.isTandoori ? 1 : 0);
+  const inStock = toSqliteBool(payload.in_stock, 1);
+
+  const insert = await run(
+    `
+    INSERT INTO menu_items (
+      category_id, name, price, prep_time_minutes, description, image_path,
+      is_peri_peri, has_cheese, is_tandoori, in_stock
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    [
+      resolvedCategoryId,
+      name,
+      price,
+      prepTime,
+      description || null,
+      imagePath || null,
+      isPeriPeri,
+      hasCheese,
+      isTandoori,
+      inStock
+    ]
+  );
+
+  return get(
+    `
+    SELECT
+      mi.id,
+      mi.name,
+      mi.price,
+      mi.prep_time_minutes,
+      COALESCE(mi.description, '') AS description,
+      mi.image_path,
+      COALESCE(mi.is_peri_peri, 0) AS is_peri_peri,
+      COALESCE(mi.has_cheese, 0) AS has_cheese,
+      COALESCE(mi.is_tandoori, 0) AS is_tandoori,
+      COALESCE(mi.in_stock, 1) AS in_stock,
+      c.id AS category_id,
+      c.name AS category
+    FROM menu_items mi
+    INNER JOIN categories c ON c.id = mi.category_id
+    WHERE mi.id = ?
+    `,
+    [insert.lastID]
+  );
+}
+
+async function updateMenuItem(menuItemId, payload = {}) {
+  const id = Number(menuItemId);
+  if (!Number.isInteger(id) || id <= 0) throw new Error("Invalid menu item id.");
+
+  const existing = await get(
+    `
+    SELECT
+      mi.id,
+      mi.name,
+      mi.category_id,
+      mi.price,
+      mi.prep_time_minutes,
+      COALESCE(mi.description, '') AS description,
+      mi.image_path,
+      COALESCE(mi.is_peri_peri, 0) AS is_peri_peri,
+      COALESCE(mi.has_cheese, 0) AS has_cheese,
+      COALESCE(mi.is_tandoori, 0) AS is_tandoori,
+      COALESCE(mi.in_stock, 1) AS in_stock,
+      c.name AS category
+    FROM menu_items mi
+    INNER JOIN categories c ON c.id = mi.category_id
+    WHERE mi.id = ?
+    `,
+    [id]
+  );
+  if (!existing) return null;
+
+  let resolvedCategoryId = existing.category_id;
+  if (payload.category_id !== undefined || payload.category !== undefined) {
+    const categoryId = Number(payload.category_id);
+    const categoryName = String(payload.category || "").trim();
+    if (Number.isInteger(categoryId) && categoryId > 0) {
+      resolvedCategoryId = categoryId;
+    } else if (categoryName) {
+      const categoryRow = await get("SELECT id FROM categories WHERE name = ?", [categoryName]);
+      resolvedCategoryId = Number(categoryRow?.id || 0) || null;
+    } else {
+      resolvedCategoryId = null;
+    }
+    if (!resolvedCategoryId) throw new Error("Valid category is required.");
+    const category = await get("SELECT id, name FROM categories WHERE id = ?", [resolvedCategoryId]);
+    if (!category || category.name === "Appetizers") {
+      throw new Error("Menu management supports non-appetizer categories only.");
+    }
+  }
+
+  const nextName = payload.name !== undefined ? String(payload.name || "").trim() : existing.name;
+  if (!nextName) throw new Error("Item name is required.");
+
+  const nextPrice = payload.price !== undefined ? Number(payload.price) : Number(existing.price);
+  if (!Number.isFinite(nextPrice) || nextPrice < 0) throw new Error("Price must be a valid non-negative number.");
+
+  const nextPrepTime =
+    payload.prep_time_minutes !== undefined ? Number(payload.prep_time_minutes) : Number(existing.prep_time_minutes);
+  if (!Number.isInteger(nextPrepTime) || nextPrepTime < 0) {
+    throw new Error("Prep time must be a non-negative integer.");
+  }
+
+  const nextDescription =
+    payload.description !== undefined ? String(payload.description || "").trim() : String(existing.description || "");
+  const nextImagePath = payload.image_path !== undefined
+    ? (payload.image_path ? String(payload.image_path).trim() : null)
+    : existing.image_path;
+
+  const inferredFlags = inferFlagsFromName(nextName);
+  const nextIsPeriPeri =
+    payload.is_peri_peri !== undefined
+      ? toSqliteBool(payload.is_peri_peri, inferredFlags.isPeriPeri ? 1 : 0)
+      : toSqliteBool(existing.is_peri_peri, inferredFlags.isPeriPeri ? 1 : 0);
+  const nextHasCheese =
+    payload.has_cheese !== undefined
+      ? toSqliteBool(payload.has_cheese, inferredFlags.hasCheese ? 1 : 0)
+      : toSqliteBool(existing.has_cheese, inferredFlags.hasCheese ? 1 : 0);
+  const nextIsTandoori =
+    payload.is_tandoori !== undefined
+      ? toSqliteBool(payload.is_tandoori, inferredFlags.isTandoori ? 1 : 0)
+      : toSqliteBool(existing.is_tandoori, inferredFlags.isTandoori ? 1 : 0);
+  const nextInStock =
+    payload.in_stock !== undefined ? toSqliteBool(payload.in_stock, 1) : toSqliteBool(existing.in_stock, 1);
+
+  await run(
+    `
+    UPDATE menu_items
+    SET
+      category_id = ?,
+      name = ?,
+      price = ?,
+      prep_time_minutes = ?,
+      description = ?,
+      image_path = ?,
+      is_peri_peri = ?,
+      has_cheese = ?,
+      is_tandoori = ?,
+      in_stock = ?
+    WHERE id = ?
+    `,
+    [
+      resolvedCategoryId,
+      nextName,
+      nextPrice,
+      nextPrepTime,
+      nextDescription || null,
+      nextImagePath || null,
+      nextIsPeriPeri,
+      nextHasCheese,
+      nextIsTandoori,
+      nextInStock,
+      id
+    ]
+  );
+
+  return get(
+    `
+    SELECT
+      mi.id,
+      mi.name,
+      mi.price,
+      mi.prep_time_minutes,
+      COALESCE(mi.description, '') AS description,
+      mi.image_path,
+      COALESCE(mi.is_peri_peri, 0) AS is_peri_peri,
+      COALESCE(mi.has_cheese, 0) AS has_cheese,
+      COALESCE(mi.is_tandoori, 0) AS is_tandoori,
+      COALESCE(mi.in_stock, 1) AS in_stock,
+      c.id AS category_id,
+      c.name AS category
+    FROM menu_items mi
+    INNER JOIN categories c ON c.id = mi.category_id
+    WHERE mi.id = ?
+    `,
+    [id]
+  );
+}
+
+async function deleteMenuItem(menuItemId) {
+  const id = Number(menuItemId);
+  if (!Number.isInteger(id) || id <= 0) throw new Error("Invalid menu item id.");
+  const existing = await get("SELECT id FROM menu_items WHERE id = ?", [id]);
+  if (!existing) return false;
+
+  const linkedOrderItems = await get("SELECT COUNT(*) AS total FROM order_items WHERE menu_item_id = ?", [id]);
+  if (Number(linkedOrderItems?.total || 0) > 0) {
+    throw new Error("Cannot delete menu item because it is used in existing orders.");
+  }
+
+  await run("DELETE FROM menu_items WHERE id = ?", [id]);
+  return true;
 }
 
 async function getAppetizers() {
@@ -734,7 +1073,7 @@ async function createOrder({
     );
     const tokenNumber = tokenRow.next_token;
 
-    const menuRows = await all("SELECT id, name, price FROM menu_items");
+    const menuRows = await all("SELECT id, name, price, COALESCE(in_stock, 1) AS in_stock FROM menu_items");
     const menuMap = new Map(menuRows.map((row) => [row.id, row]));
 
     const appetizerRows = await all(
@@ -794,6 +1133,9 @@ async function createOrder({
       const menuItem = menuMap.get(menuItemId);
       if (!menuItem) {
         throw new Error(`Menu item not found: ${menuItemId}`);
+      }
+      if (Number(menuItem.in_stock) !== 1) {
+        throw new Error(`Menu item is out of stock: ${menuItem.name}`);
       }
 
       const lineTotal = Number(menuItem.price) * quantity;
@@ -1139,7 +1481,7 @@ async function editOrder(orderId, items) {
 
   await run("BEGIN IMMEDIATE TRANSACTION");
   try {
-    const menuRows = await all("SELECT id, price FROM menu_items");
+    const menuRows = await all("SELECT id, name, price, COALESCE(in_stock, 1) AS in_stock FROM menu_items");
     const menuMap = new Map(menuRows.map((row) => [row.id, row]));
 
     const appetizerRows = await all(
@@ -1195,6 +1537,9 @@ async function editOrder(orderId, items) {
       const menuItem = menuMap.get(menuItemId);
       if (!menuItem) {
         throw new Error(`Menu item not found: ${menuItemId}`);
+      }
+      if (Number(menuItem.in_stock) !== 1) {
+        throw new Error(`Menu item is out of stock: ${menuItem.name}`);
       }
       const lineTotal = Number(menuItem.price) * quantity;
       totalAmount += lineTotal;
@@ -1256,6 +1601,10 @@ module.exports = {
   updateUser,
   deleteUser,
   getMenu,
+  getMenuManagementItems,
+  createMenuItem,
+  updateMenuItem,
+  deleteMenuItem,
   getAppetizers,
   getOrders,
   getOrderById,

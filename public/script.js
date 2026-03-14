@@ -37,6 +37,7 @@ const printCompletedInvoicesBtn = document.getElementById("print-completed-invoi
 const summaryPanelEl = document.querySelector(".summary-panel");
 const userMenuBtn = document.getElementById("user-menu-btn");
 const userMenuDropdown = document.getElementById("user-menu-dropdown");
+const manageMenuLink = document.getElementById("manage-menu-link");
 const manageUsersLink = document.getElementById("manage-users-link");
 const currentUserRoleEl = document.getElementById("current-user-role");
 const logoutBtn = document.getElementById("logout-btn");
@@ -203,6 +204,9 @@ function applyRoleBasedUi() {
   if (currentUserRoleEl) {
     currentUserRoleEl.textContent = isAdminRole() ? "Admin" : "User";
   }
+  if (manageMenuLink) {
+    manageMenuLink.classList.toggle("hidden", !isAdminRole());
+  }
   if (manageUsersLink) {
     manageUsersLink.classList.toggle("hidden", !isAdminRole());
   }
@@ -309,6 +313,21 @@ function normalizeCategoryName(category) {
   return String(category || "").trim().toLowerCase();
 }
 
+function isTruthyFlag(value, defaultValue = false) {
+  if (value === undefined || value === null || value === "") return Boolean(defaultValue);
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value > 0;
+  const normalized = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return Boolean(defaultValue);
+}
+
+function isMenuItemInStock(item) {
+  if (!item) return false;
+  return isTruthyFlag(item.in_stock, true);
+}
+
 function getCategoryEmoji(category) {
   return categoryEmojiMap[normalizeCategoryName(category)] || "\u{1F37D}\uFE0F";
 }
@@ -328,7 +347,9 @@ function getFoodEmoji(itemName = "", category = "") {
   return getCategoryEmoji(category);
 }
 
-function getFoodImageSource(itemName = "", category = "") {
+function getFoodImageSource(itemName = "", category = "", imagePath = "") {
+  const explicitImagePath = String(imagePath || "").trim();
+  if (explicitImagePath) return explicitImagePath;
   const text = `${String(itemName)} ${String(category)}`.toLowerCase();
   if (text.includes("sausage")) return "/icons/csausages.png";
   if (text.includes("breast")) return "/icons/cbreast.png";
@@ -358,9 +379,15 @@ function isCheeseItemLabel(label = "") {
   return text.includes("cheese");
 }
 
-function getCornerAccentType(label = "") {
-  const hasPeri = isPeriPeriItemLabel(label);
-  const hasCheese = isCheeseItemLabel(label);
+function getCornerAccentType(label = "", item = null) {
+  const hasPeri =
+    item && item.is_peri_peri !== undefined
+      ? isTruthyFlag(item.is_peri_peri, isPeriPeriItemLabel(label))
+      : isPeriPeriItemLabel(label);
+  const hasCheese =
+    item && item.has_cheese !== undefined
+      ? isTruthyFlag(item.has_cheese, isCheeseItemLabel(label))
+      : isCheeseItemLabel(label);
   if (hasPeri && hasCheese) return "peri-cheese";
   if (hasPeri) return "peri";
   if (hasCheese) return "cheese";
@@ -498,6 +525,10 @@ function getHiddenInputForItemId(itemId) {
 function setMenuItemQty(itemId, value) {
   const input = getHiddenInputForItemId(itemId);
   if (!input) return 0;
+  if (String(input.dataset.inStock || "1") === "0") {
+    input.value = "0";
+    return 0;
+  }
   const clamped = Math.min(MAX_QTY_PER_ITEM, Math.max(0, Number(value) || 0));
   input.value = String(clamped);
 
@@ -514,6 +545,10 @@ function setMenuItemQty(itemId, value) {
 function changeMenuItemQty(itemId, delta) {
   const input = getHiddenInputForItemId(itemId);
   if (!input) return 0;
+  if (String(input.dataset.inStock || "1") === "0") {
+    showMessage("This item is currently out of stock.", "error");
+    return 0;
+  }
   const next = (Number(input.value) || 0) + Number(delta || 0);
   return setMenuItemQty(itemId, next);
 }
@@ -532,6 +567,7 @@ function renderVariantPreviewRows() {
   if (!Array.isArray(currentFoodPreviewVariants) || currentFoodPreviewVariants.length === 0) return;
 
   currentFoodPreviewVariants.forEach((variant) => {
+    const variantInStock = isMenuItemInStock(variant.item);
     const row = document.createElement("div");
     row.className = "food-preview-variant-row";
 
@@ -544,7 +580,7 @@ function renderVariantPreviewRows() {
 
     const price = document.createElement("span");
     price.className = "food-preview-variant-price";
-    price.textContent = formatCurrency(variant.item.price);
+    price.textContent = variantInStock ? formatCurrency(variant.item.price) : "Out of stock";
 
     const controls = document.createElement("div");
     controls.className = "food-preview-variant-controls";
@@ -554,6 +590,7 @@ function renderVariantPreviewRows() {
     minusBtn.className = "food-qty-btn compact";
     minusBtn.textContent = "-";
     minusBtn.setAttribute("aria-label", `Decrease ${variant.item.name}`);
+    minusBtn.disabled = !variantInStock;
 
     const qty = document.createElement("span");
     qty.className = "food-qty-value compact";
@@ -566,13 +603,16 @@ function renderVariantPreviewRows() {
     plusBtn.className = "food-qty-btn compact";
     plusBtn.textContent = "+";
     plusBtn.setAttribute("aria-label", `Increase ${variant.item.name}`);
+    plusBtn.disabled = !variantInStock;
 
-    minusBtn.addEventListener("click", () => {
-      changeMenuItemQty(variant.item.id, -1);
-    });
-    plusBtn.addEventListener("click", () => {
-      changeMenuItemQty(variant.item.id, 1);
-    });
+    if (variantInStock) {
+      minusBtn.addEventListener("click", () => {
+        changeMenuItemQty(variant.item.id, -1);
+      });
+      plusBtn.addEventListener("click", () => {
+        changeMenuItemQty(variant.item.id, 1);
+      });
+    }
 
     meta.appendChild(portion);
     meta.appendChild(price);
@@ -662,6 +702,7 @@ function renderRegularCategory(items, sectionEl) {
     const stepper = createQtyStepper("menu-item-qty", MAX_QTY_PER_ITEM, {
       id: String(item.id),
       price: String(item.price),
+      inStock: isMenuItemInStock(item) ? "1" : "0",
       type: item.type || "menu_item",
       ...(item.group_id ? { groupId: String(item.group_id) } : {}),
       ...(item.variant_id ? { variantId: String(item.variant_id) } : {})
@@ -757,16 +798,25 @@ function renderCategoryItems(category) {
       if (isTandoorItemLabel(entry.baseName)) {
         card.classList.add("food-card-tandoor");
       }
-      const accentType = getCornerAccentType(entry.baseName);
+      const inStockVariants = entry.variants.filter((variant) => isMenuItemInStock(variant.item));
+      const groupInStock = inStockVariants.length > 0;
+      const selectedVariant = getDefaultVariantForGroup(groupInStock ? inStockVariants : entry.variants);
+      const accentType = getCornerAccentType(entry.baseName, selectedVariant?.item || null);
       if (accentType) {
         card.classList.add("food-card-corner-accent", `food-card-corner-${accentType}`);
       }
+      if (!groupInStock) {
+        card.classList.add("food-card-out-of-stock");
+      }
       const variantMedia = document.createElement("div");
       variantMedia.className = "food-card-media";
-      const selectedVariant = getDefaultVariantForGroup(entry.variants);
       if (!selectedVariant?.item) return;
       const variantSample = selectedVariant.item;
-      const variantImageSrc = getFoodImageSource(variantSample?.name || "", category);
+      const variantImageSrc = getFoodImageSource(
+        variantSample?.name || "",
+        category,
+        variantSample?.image_path || ""
+      );
       if (variantImageSrc) {
         const mediaImg = document.createElement("img");
         mediaImg.src = variantImageSrc;
@@ -794,15 +844,25 @@ function renderCategoryItems(category) {
       const selectionSummary = document.createElement("p");
       selectionSummary.className = "food-card-selection-summary";
       selectionSummary.__variantMeta = entry.variants;
-      selectionSummary.textContent = buildVariantSelectionSummary(entry.variants);
+      selectionSummary.textContent = groupInStock ? buildVariantSelectionSummary(entry.variants) : "Out of stock";
 
       const previewBtn = document.createElement("button");
       previewBtn.type = "button";
       previewBtn.className = "btn btn-secondary appetizer-preview-btn";
-      previewBtn.textContent = "Preview";
-      previewBtn.addEventListener("click", () => {
-        openVariantPreview(entry.baseName, entry.variants);
-      });
+      previewBtn.textContent = groupInStock ? "Preview" : "Out of Stock";
+      previewBtn.disabled = !groupInStock;
+      if (groupInStock) {
+        previewBtn.addEventListener("click", () => {
+          openVariantPreview(entry.baseName, entry.variants);
+        });
+      }
+
+      if (!groupInStock) {
+        const outLabel = document.createElement("span");
+        outLabel.className = "stock-status-badge out";
+        outLabel.textContent = "Out of Stock";
+        card.appendChild(outLabel);
+      }
 
       card.appendChild(variantMedia);
       card.appendChild(title);
@@ -816,20 +876,24 @@ function renderCategoryItems(category) {
     const item = entry.item;
     const hiddenInput = getHiddenInputForItemId(item.id);
     if (!hiddenInput) return;
+    const inStock = isMenuItemInStock(item);
 
     const card = document.createElement("article");
     card.className = "food-card";
+    if (!inStock) {
+      card.classList.add("food-card-out-of-stock");
+    }
     if (isTandoorItemLabel(item.name)) {
       card.classList.add("food-card-tandoor");
     }
-    const accentType = getCornerAccentType(item.name);
+    const accentType = getCornerAccentType(item.name, item);
     if (accentType) {
       card.classList.add("food-card-corner-accent", `food-card-corner-${accentType}`);
     }
 
     const media = document.createElement("div");
     media.className = "food-card-media";
-    const imageSrc = getFoodImageSource(item.name, category);
+    const imageSrc = getFoodImageSource(item.name, category, item.image_path || "");
     if (imageSrc) {
       const mediaImg = document.createElement("img");
       mediaImg.src = imageSrc;
@@ -862,6 +926,7 @@ function renderCategoryItems(category) {
     minusBtn.className = "food-qty-btn";
     minusBtn.textContent = "-";
     minusBtn.setAttribute("aria-label", `Decrease ${item.name}`);
+    minusBtn.disabled = !inStock;
 
     const qtyValue = document.createElement("span");
     qtyValue.className = "food-qty-value";
@@ -873,17 +938,28 @@ function renderCategoryItems(category) {
     plusBtn.className = "food-qty-btn";
     plusBtn.textContent = "+";
     plusBtn.setAttribute("aria-label", `Increase ${item.name}`);
+    plusBtn.disabled = !inStock;
 
-    minusBtn.addEventListener("click", () => {
-      changeMenuItemQty(item.id, -1);
-    });
-    plusBtn.addEventListener("click", () => {
-      changeMenuItemQty(item.id, 1);
-    });
+    if (inStock) {
+      minusBtn.addEventListener("click", () => {
+        changeMenuItemQty(item.id, -1);
+      });
+      plusBtn.addEventListener("click", () => {
+        changeMenuItemQty(item.id, 1);
+      });
+    }
 
     controls.appendChild(minusBtn);
     controls.appendChild(qtyValue);
     controls.appendChild(plusBtn);
+
+    if (!inStock) {
+      const outLabel = document.createElement("span");
+      outLabel.className = "stock-status-badge out";
+      outLabel.textContent = "Out of Stock";
+      card.appendChild(outLabel);
+      hiddenInput.value = "0";
+    }
 
     card.appendChild(media);
     card.appendChild(title);
@@ -912,6 +988,7 @@ function collectItems() {
 
   const regularInputs = menuContainer.querySelectorAll(".menu-item-qty");
   regularInputs.forEach((input) => {
+    if (String(input.dataset.inStock || "1") === "0") return;
     const quantity = Number(input.value) || 0;
     if (quantity <= 0) return;
 
@@ -1120,11 +1197,12 @@ function renderEditMenuList() {
   if (!editMenuListEl) return;
   editMenuListEl.innerHTML = "";
   menuItems.forEach((item) => {
+    const inStock = isMenuItemInStock(item);
     const row = document.createElement("div");
     row.className = "edit-menu-row";
     row.innerHTML = `
       <span>${item.name} - ${formatCurrency(item.price)}</span>
-      <button class="btn add-item-btn" type="button" data-edit-action="add" data-menu-id="${item.id}">Add</button>
+      <button class="btn add-item-btn" type="button" data-edit-action="add" data-menu-id="${item.id}" ${inStock ? "" : "disabled"}>${inStock ? "Add" : "Out of Stock"}</button>
     `;
     editMenuListEl.appendChild(row);
   });
@@ -1137,6 +1215,10 @@ function findMenuItemById(menuId) {
 function addToEditCart(menuId) {
   const menuItem = findMenuItemById(menuId);
   if (!menuItem) return;
+  if (!isMenuItemInStock(menuItem)) {
+    showMessage("This item is currently out of stock.", "error");
+    return;
+  }
 
   const type = menuItem.type === "appetizer" ? "appetizer" : "menu_item";
   const key = type === "appetizer" ? `appetizer:${menuItem.variant_id}` : `menu_item:${menuItem.id}`;
@@ -1671,6 +1753,12 @@ async function init() {
       throw error;
     }
 
+    if (manageMenuLink && !isAdminRole()) {
+      manageMenuLink.classList.add("hidden");
+    }
+    if (manageMenuLink && isAdminRole()) {
+      manageMenuLink.classList.remove("hidden");
+    }
     if (manageUsersLink && !isAdminRole()) {
       manageUsersLink.classList.add("hidden");
     }

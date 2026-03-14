@@ -293,6 +293,7 @@ body {
 }
 
 .food-card {
+  position: relative;
   min-height: 160px;
   border: 2px solid #F0DEDE;
   border-radius: 16px;
@@ -355,6 +356,35 @@ body {
 .food-card:hover {
   transform: translateY(-1px);
   box-shadow: 0 14px 24px rgba(15, 23, 42, 0.11);
+}
+
+.food-card-out-of-stock {
+  opacity: 0.62;
+  filter: grayscale(0.6);
+  background: linear-gradient(180deg, #F3F4F6, #E5E7EB);
+}
+
+.food-card-out-of-stock:hover {
+  transform: none;
+  box-shadow: 0 10px 18px rgba(15, 23, 42, 0.08);
+}
+
+.stock-status-badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 3;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 4px 8px;
+}
+
+.stock-status-badge.out {
+  background: #7F1D1D;
+  color: #FFFFFF;
 }
 
 .food-card-media {
@@ -442,6 +472,13 @@ body {
 
 .food-qty-btn:hover {
   background: linear-gradient(180deg, #FFEFEF, #FFE7E7);
+}
+
+.food-qty-btn:disabled,
+.appetizer-preview-btn:disabled,
+.add-item-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
 }
 
 .food-qty-value {

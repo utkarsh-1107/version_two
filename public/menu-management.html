@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Menu Management | Blazing Barbecue</title>
+  <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
+  <link rel="icon" type="image/png" sizes="96x96" href="/icons/favicon-96x96.png" />
+  <link rel="icon" type="image/svg+xml" href="/icons/favicon.svg" />
+  <link rel="icon" href="/icons/favicon.ico" />
+  <link rel="manifest" href="/icons/site.webmanifest" />
+  <link rel="stylesheet" href="/menu-management.css" />
+</head>
+<body>
+  <header class="menu-header">
+    <h1>Menu Management</h1>
+    <div class="header-actions">
+      <a class="btn secondary" href="/">Back to POS</a>
+      <button id="logout-btn" class="btn" type="button">Logout</button>
+    </div>
+  </header>
+
+  <main class="menu-main">
+    <section class="panel">
+      <h2>Create Menu Item</h2>
+      <form id="create-menu-form" class="menu-form" action="javascript:void(0);">
+        <input id="create-name" type="text" placeholder="Item Name" required />
+        <input id="create-price" type="number" min="0" step="0.01" placeholder="Price" required />
+        <select id="create-category" required>
+          <option value="Wraps">Wraps</option>
+          <option value="Wings">Wings</option>
+          <option value="Sandwiches">Sandwiches</option>
+          <option value="Hot Dogs">Hot Dogs</option>
+          <option value="Full Leg">Full Leg</option>
+          <option value="Drumsticks">Drumsticks</option>
+          <option value="Extras">Extras</option>
+        </select>
+        <input id="create-prep-time" type="number" min="0" step="1" value="10" placeholder="Prep Time (mins)" required />
+        <textarea id="create-description" rows="2" placeholder="Description (optional)"></textarea>
+        <input id="create-image" type="file" accept="image/*" />
+
+        <div class="flag-grid">
+          <label><input id="create-peri" type="checkbox" /> Peri Peri</label>
+          <label><input id="create-cheese" type="checkbox" /> Cheese</label>
+          <label><input id="create-tandoori" type="checkbox" /> Tandoori</label>
+          <label><input id="create-in-stock" type="checkbox" checked /> Available</label>
+        </div>
+
+        <button class="btn create-btn" type="submit">Create Item</button>
+      </form>
+      <p id="create-message" class="message"></p>
+    </section>
+
+    <section class="panel">
+      <h2>Manage Menu Items</h2>
+      <div id="menu-items-grid" class="menu-items-grid"></div>
+      <p id="items-message" class="message"></p>
+    </section>
+  </main>
+
+  <script src="/menu-management.js"></script>
+</body>
+</html>

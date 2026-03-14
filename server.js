@@ -1,4 +1,5 @@
 const path = require("path");
+const fs = require("fs");
 const express = require("express");
 const PDFDocument = require("pdfkit");
 
@@ -60,7 +61,7 @@ const BUSINESS_INFO = {
   }
 };
 
-app.use(express.json());
+app.use(express.json({ limit: "8mb" }));
 app.use(express.static(path.join(__dirname, "public"), { index: false }));
 
 let initError = null;
@@ -99,6 +100,62 @@ function invalidateRuntimeCache() {
   runtimeCache.menuExpiresAt = 0;
   runtimeCache.stats = null;
   runtimeCache.statsExpiresAt = 0;
+}
+
+const menuUploadsDir = path.join(__dirname, "public", "uploads", "menu");
+
+function sanitizeFileBaseName(input = "") {
+  const normalized = String(input || "").trim().toLowerCase();
+  const collapsed = normalized.replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+  return collapsed || "menu-item";
+}
+
+function parseImageDataUrl(dataUrl = "") {
+  const match = String(dataUrl || "").match(/^data:image\/(png|jpe?g|webp|gif);base64,([A-Za-z0-9+/=\s]+)$/i);
+  if (!match) {
+    throw new Error("Invalid image payload. Please upload PNG, JPG, WEBP or GIF.");
+  }
+  const subtype = String(match[1] || "").toLowerCase();
+  const ext = subtype === "jpeg" || subtype === "jpg" ? "jpg" : subtype;
+  const base64Data = String(match[2] || "").replace(/\s+/g, "");
+  const buffer = Buffer.from(base64Data, "base64");
+  if (!buffer || buffer.length === 0) {
+    throw new Error("Uploaded image is empty.");
+  }
+  const maxBytes = 5 * 1024 * 1024;
+  if (buffer.length > maxBytes) {
+    throw new Error("Image is too large. Max size is 5MB.");
+  }
+  return { buffer, ext };
+}
+
+async function saveMenuImageDataUrl(dataUrl, nameHint = "") {
+  const { buffer, ext } = parseImageDataUrl(dataUrl);
+  if (!fs.existsSync(menuUploadsDir)) {
+    fs.mkdirSync(menuUploadsDir, { recursive: true });
+  }
+  const safeBase = sanitizeFileBaseName(nameHint);
+  const fileName = `${safeBase}-${Date.now()}-${Math.round(Math.random() * 1e6)}.${ext}`;
+  const filePath = path.join(menuUploadsDir, fileName);
+  await fs.promises.writeFile(filePath, buffer);
+  return `/uploads/menu/${fileName}`;
+}
+
+function resolveManagedMenuImagePath(imagePath = "") {
+  const normalized = String(imagePath || "").trim();
+  if (!normalized.startsWith("/uploads/menu/")) return null;
+  const fileName = path.basename(normalized);
+  return path.join(menuUploadsDir, fileName);
+}
+
+async function deleteManagedMenuImage(imagePath = "") {
+  const targetPath = resolveManagedMenuImagePath(imagePath);
+  if (!targetPath) return;
+  try {
+    await fs.promises.unlink(targetPath);
+  } catch (_error) {
+    // ignore missing file cleanup
+  }
 }
 
 function formatInr(value) {
@@ -401,6 +458,13 @@ app.get("/users", async (req, res) => {
   if (!(await attachRequestUser(req, res))) return;
   if (!ensureAdminAccess(req, res)) return;
   return res.sendFile(path.join(__dirname, "public", "users.html"));
+});
+
+app.get("/menu-management", async (req, res) => {
+  if (!(await ensureDatabaseReady(res))) return;
+  if (!(await attachRequestUser(req, res))) return;
+  if (!ensureAdminAccess(req, res)) return;
+  return res.sendFile(path.join(__dirname, "public", "menu-management.html"));
 });
 
 function formatOrderCode(order) {
@@ -935,6 +999,161 @@ app.get("/menu", async (req, res) => {
     res.status(500).json({
       error: "Failed to fetch menu.",
       detail: error.message || String(error)
+    });
+  }
+});
+
+app.get("/menu/manage", async (req, res) => {
+  try {
+    if (!(await ensureDatabaseReady(res))) return;
+    if (!(await attachRequestUser(req, res))) return;
+    if (!ensureAdminAccess(req, res)) return;
+    const items = await db.getMenuManagementItems();
+    res.setHeader("Cache-Control", "no-store");
+    res.json(items);
+  } catch (error) {
+    console.error("GET /menu/manage failed:", error);
+    res.status(500).json({
+      error: "Failed to fetch menu management data.",
+      detail: error.message || String(error)
+    });
+  }
+});
+
+app.post("/menu", async (req, res) => {
+  try {
+    if (!(await ensureDatabaseReady(res))) return;
+    if (!(await attachRequestUser(req, res))) return;
+    if (!ensureAdminAccess(req, res)) return;
+    if (READ_ONLY) {
+      return res.status(405).json({ error: "Read-only mode is enabled." });
+    }
+
+    const payload = { ...(req.body || {}) };
+    let storedImagePath = null;
+    if (payload.image_data_url) {
+      storedImagePath = await saveMenuImageDataUrl(payload.image_data_url, payload.name || payload.image_filename || "");
+      payload.image_path = storedImagePath;
+    }
+    delete payload.image_data_url;
+    delete payload.image_filename;
+
+    try {
+      const created = await db.createMenuItem(payload);
+      invalidateRuntimeCache();
+      broadcastEvent("menu_changed", { menu_item_id: created?.id || null });
+      broadcastEvent("orders_changed");
+      res.status(201).json(created);
+    } catch (error) {
+      if (storedImagePath) {
+        await deleteManagedMenuImage(storedImagePath);
+      }
+      throw error;
+    }
+  } catch (error) {
+    console.error("POST /menu failed:", error);
+    res.status(400).json({
+      error: error.message || "Failed to create menu item."
+    });
+  }
+});
+
+app.put("/menu/:id", async (req, res) => {
+  try {
+    if (!(await ensureDatabaseReady(res))) return;
+    if (!(await attachRequestUser(req, res))) return;
+    if (!ensureAdminAccess(req, res)) return;
+    if (READ_ONLY) {
+      return res.status(405).json({ error: "Read-only mode is enabled." });
+    }
+
+    const menuItemId = Number(req.params.id);
+    if (!Number.isInteger(menuItemId) || menuItemId <= 0) {
+      return res.status(400).json({ error: "Invalid menu item id." });
+    }
+
+    const existingItems = await db.getMenuManagementItems();
+    const existing = existingItems.find((item) => Number(item.id) === menuItemId);
+    if (!existing) {
+      return res.status(404).json({ error: "Menu item not found." });
+    }
+
+    const payload = { ...(req.body || {}) };
+    let storedImagePath = null;
+    const shouldClearImage = ["1", "true"].includes(String(payload.clear_image || "").toLowerCase());
+    if (payload.image_data_url) {
+      storedImagePath = await saveMenuImageDataUrl(payload.image_data_url, payload.name || existing.name || payload.image_filename || "");
+      payload.image_path = storedImagePath;
+    } else if (shouldClearImage) {
+      payload.image_path = null;
+    }
+    delete payload.image_data_url;
+    delete payload.image_filename;
+    delete payload.clear_image;
+
+    const updated = await db.updateMenuItem(menuItemId, payload);
+    if (!updated) {
+      if (storedImagePath) {
+        await deleteManagedMenuImage(storedImagePath);
+      }
+      return res.status(404).json({ error: "Menu item not found." });
+    }
+
+    if (storedImagePath && existing.image_path && existing.image_path !== storedImagePath) {
+      await deleteManagedMenuImage(existing.image_path);
+    } else if (shouldClearImage && existing.image_path) {
+      await deleteManagedMenuImage(existing.image_path);
+    }
+
+    invalidateRuntimeCache();
+    broadcastEvent("menu_changed", { menu_item_id: updated.id });
+    broadcastEvent("orders_changed");
+    res.json(updated);
+  } catch (error) {
+    console.error("PUT /menu/:id failed:", error);
+    res.status(400).json({
+      error: error.message || "Failed to update menu item."
+    });
+  }
+});
+
+app.delete("/menu/:id", async (req, res) => {
+  try {
+    if (!(await ensureDatabaseReady(res))) return;
+    if (!(await attachRequestUser(req, res))) return;
+    if (!ensureAdminAccess(req, res)) return;
+    if (READ_ONLY) {
+      return res.status(405).json({ error: "Read-only mode is enabled." });
+    }
+
+    const menuItemId = Number(req.params.id);
+    if (!Number.isInteger(menuItemId) || menuItemId <= 0) {
+      return res.status(400).json({ error: "Invalid menu item id." });
+    }
+
+    const existingItems = await db.getMenuManagementItems();
+    const existing = existingItems.find((item) => Number(item.id) === menuItemId);
+    if (!existing) {
+      return res.status(404).json({ error: "Menu item not found." });
+    }
+
+    const deleted = await db.deleteMenuItem(menuItemId);
+    if (!deleted) {
+      return res.status(404).json({ error: "Menu item not found." });
+    }
+
+    if (existing.image_path) {
+      await deleteManagedMenuImage(existing.image_path);
+    }
+
+    invalidateRuntimeCache();
+    broadcastEvent("menu_changed", { menu_item_id: menuItemId, deleted: true });
+    broadcastEvent("orders_changed");
+    res.json({ message: "Menu item deleted." });
+  } catch (error) {
+    console.error("DELETE /menu/:id failed:", error);
+    res.status(400).json({
+      error: error.message || "Failed to delete menu item."
     });
   }
 });
