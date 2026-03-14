@@ -43,6 +43,7 @@ const pool = new Pool({
   connectionString,
   ssl: useSSL ? { rejectUnauthorized: false } : false
 });
+let menuColumnsEnsured = false;
 const MAX_QTY_PER_ITEM = 10;
 const MAX_CUSTOMER_NAME_LEN = 75;
 const MAX_CUSTOMER_ADDRESS_LEN = 255;
@@ -74,6 +75,17 @@ async function all(sql, params = []) {
 async function ping() {
   const row = await get("SELECT 1 AS ok");
   return Number(row?.ok || 0) === 1;
+}
+
+async function ensureMenuItemAdminColumns() {
+  if (menuColumnsEnsured) return;
+  await run("ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS description TEXT");
+  await run("ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS image_path TEXT");
+  await run("ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS is_peri_peri BOOLEAN NOT NULL DEFAULT FALSE");
+  await run("ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS has_cheese BOOLEAN NOT NULL DEFAULT FALSE");
+  await run("ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS is_tandoori BOOLEAN NOT NULL DEFAULT FALSE");
+  await run("ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS in_stock BOOLEAN NOT NULL DEFAULT TRUE");
+  menuColumnsEnsured = true;
 }
 
 const categoriesSeed = [
@@ -552,6 +564,7 @@ async function initDatabase() {
 }
 
 async function getMenu() {
+  await ensureMenuItemAdminColumns();
   return all(
     `
     SELECT
@@ -612,6 +625,7 @@ async function getMenu() {
 }
 
 async function getMenuManagementItems() {
+  await ensureMenuItemAdminColumns();
   return all(
     `
     SELECT
@@ -636,6 +650,7 @@ async function getMenuManagementItems() {
 }
 
 async function createMenuItem(payload = {}) {
+  await ensureMenuItemAdminColumns();
   const categoryId = Number(payload.category_id);
   const categoryName = String(payload.category || "").trim();
   const name = String(payload.name || "").trim();
@@ -720,6 +735,7 @@ async function createMenuItem(payload = {}) {
 }
 
 async function updateMenuItem(menuItemId, payload = {}) {
+  await ensureMenuItemAdminColumns();
   const id = Number(menuItemId);
   if (!Number.isInteger(id) || id <= 0) throw new Error("Invalid menu item id.");
 
@@ -862,6 +878,7 @@ async function updateMenuItem(menuItemId, payload = {}) {
 }
 
 async function deleteMenuItem(menuItemId) {
+  await ensureMenuItemAdminColumns();
   const id = Number(menuItemId);
   if (!Number.isInteger(id) || id <= 0) throw new Error("Invalid menu item id.");
   const existing = await get("SELECT id FROM menu_items WHERE id = $1", [id]);
@@ -1013,6 +1030,7 @@ async function createOrder(
   },
   retriesLeft = 2
 ) {
+  await ensureMenuItemAdminColumns();
   if (!Array.isArray(items) || items.length === 0) {
     throw new Error("At least one item is required.");
   }
@@ -1435,6 +1453,7 @@ async function deleteOrder(orderId) {
 }
 
 async function editOrder(orderId, items) {
+  await ensureMenuItemAdminColumns();
   if (!Array.isArray(items)) {
     throw new Error("Items payload is required.");
   }
