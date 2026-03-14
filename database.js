@@ -506,6 +506,19 @@ async function initDatabase() {
       );
     }
 
+    const extrasCategory = await get("SELECT id FROM categories WHERE name = 'Extras'");
+    if (extrasCategory?.id) {
+      await run(
+        `
+        UPDATE menu_items
+        SET category_id = ?
+        WHERE category_id IS NULL
+           OR category_id NOT IN (SELECT id FROM categories)
+        `,
+        [extrasCategory.id]
+      );
+    }
+
     const categoryRows = await all("SELECT id, name FROM categories");
     const categoryMap = new Map(categoryRows.map((row) => [row.name, row.id]));
 
@@ -671,12 +684,12 @@ async function getMenuManagementItems() {
       COALESCE(mi.has_cheese, 0) AS has_cheese,
       COALESCE(mi.is_tandoori, 0) AS is_tandoori,
       COALESCE(mi.in_stock, 1) AS in_stock,
-      c.id AS category_id,
-      c.name AS category
+      COALESCE(c.id, extras.id) AS category_id,
+      COALESCE(c.name, 'Extras') AS category
     FROM menu_items mi
-    INNER JOIN categories c ON c.id = mi.category_id
-    WHERE c.name != 'Appetizers'
-    ORDER BY c.id ASC, mi.id ASC
+    LEFT JOIN categories c ON c.id = mi.category_id
+    LEFT JOIN categories extras ON extras.name = 'Extras'
+    ORDER BY COALESCE(c.id, extras.id, 9999) ASC, mi.id ASC
     `
   );
 }
@@ -694,17 +707,24 @@ async function createMenuItem(payload = {}) {
   if (!Number.isFinite(price) || price < 0) throw new Error("Price must be a valid non-negative number.");
   if (!Number.isInteger(prepTime) || prepTime < 0) throw new Error("Prep time must be a non-negative integer.");
 
+  const extrasCategory = await get("SELECT id FROM categories WHERE name = 'Extras'");
+  const extrasCategoryId = Number(extrasCategory?.id || 0) || null;
+
   let resolvedCategoryId = Number.isInteger(categoryId) && categoryId > 0 ? categoryId : null;
   if (!resolvedCategoryId && categoryName) {
     const categoryRow = await get("SELECT id FROM categories WHERE name = ?", [categoryName]);
     resolvedCategoryId = Number(categoryRow?.id || 0) || null;
   }
+  if (!resolvedCategoryId) {
+    resolvedCategoryId = extrasCategoryId;
+  }
   if (!resolvedCategoryId) throw new Error("Valid category is required.");
 
   const category = await get("SELECT id, name FROM categories WHERE id = ?", [resolvedCategoryId]);
-  if (!category || category.name === "Appetizers") {
-    throw new Error("Menu management supports non-appetizer categories only.");
+  if (!category) {
+    resolvedCategoryId = extrasCategoryId;
   }
+  if (!resolvedCategoryId) throw new Error("Valid category is required.");
 
   const inferredFlags = inferFlagsFromName(name);
   const isPeriPeri = toSqliteBool(payload.is_peri_peri, inferredFlags.isPeriPeri ? 1 : 0);
@@ -784,6 +804,9 @@ async function updateMenuItem(menuItemId, payload = {}) {
   );
   if (!existing) return null;
 
+  const extrasCategory = await get("SELECT id FROM categories WHERE name = 'Extras'");
+  const extrasCategoryId = Number(extrasCategory?.id || 0) || null;
+
   let resolvedCategoryId = existing.category_id;
   if (payload.category_id !== undefined || payload.category !== undefined) {
     const categoryId = Number(payload.category_id);
@@ -796,11 +819,15 @@ async function updateMenuItem(menuItemId, payload = {}) {
     } else {
       resolvedCategoryId = null;
     }
+    if (!resolvedCategoryId) {
+      resolvedCategoryId = extrasCategoryId;
+    }
     if (!resolvedCategoryId) throw new Error("Valid category is required.");
     const category = await get("SELECT id, name FROM categories WHERE id = ?", [resolvedCategoryId]);
-    if (!category || category.name === "Appetizers") {
-      throw new Error("Menu management supports non-appetizer categories only.");
+    if (!category) {
+      resolvedCategoryId = extrasCategoryId;
     }
+    if (!resolvedCategoryId) throw new Error("Valid category is required.");
   }
 
   const nextName = payload.name !== undefined ? String(payload.name || "").trim() : existing.name;

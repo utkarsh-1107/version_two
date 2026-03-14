@@ -27,6 +27,7 @@
         <input id="create-name" type="text" placeholder="Item Name" required />
         <input id="create-price" type="number" min="0" step="0.01" placeholder="Price" required />
         <select id="create-category" required>
+          <option value="Appetizers">Appetizers</option>
           <option value="Wraps">Wraps</option>
           <option value="Wings">Wings</option>
           <option value="Sandwiches">Sandwiches</option>
@@ -53,10 +54,20 @@
 
     <section class="panel">
       <h2>Manage Menu Items</h2>
-      <div id="menu-items-grid" class="menu-items-grid"></div>
+      <div id="menu-category-sections" class="menu-category-sections"></div>
       <p id="items-message" class="message"></p>
     </section>
   </main>
+
+  <div id="menu-item-modal" class="modal hidden" aria-hidden="true">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="modal-title">Item Details</h3>
+        <button id="modal-close-btn" class="icon-btn" type="button" aria-label="Close">x</button>
+      </div>
+      <div id="modal-body" class="modal-body"></div>
+    </div>
+  </div>
 
   <script src="/menu-management.js"></script>
 </body>

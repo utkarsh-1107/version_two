@@ -1,6 +1,7 @@
 :root {
   --red: #c61f1f;
   --red-dark: #941616;
+  --border: #f0d5d5;
 }
 
 * {
@@ -25,7 +26,7 @@ body {
 
 .menu-header h1 {
   margin: 0;
-  font-size: 24px;
+  font-size: 23px;
 }
 
 .header-actions {
@@ -34,11 +35,12 @@ body {
 }
 
 .btn {
-  height: 40px;
+  height: 36px;
   border: none;
-  border-radius: 10px;
-  padding: 0 14px;
+  border-radius: 8px;
+  padding: 0 12px;
   font-weight: 700;
+  font-size: 13px;
   cursor: pointer;
   background: #ffffff;
   color: var(--red-dark);
@@ -56,151 +58,70 @@ body {
 }
 
 .menu-main {
-  padding: 16px;
+  padding: 14px;
   display: grid;
-  gap: 14px;
+  gap: 12px;
 }
 
 .panel {
   background: #ffffff;
-  border: 1px solid #f0d1d1;
-  border-radius: 14px;
-  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
 }
 
 .panel h2 {
-  margin: 0 0 10px;
+  margin: 0 0 8px;
   color: var(--red-dark);
-  font-size: 20px;
+  font-size: 18px;
 }
 
 .menu-form {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
 }
 
 .menu-form input,
 .menu-form select,
 .menu-form textarea,
-.item-form input,
-.item-form select,
-.item-form textarea {
+.modal-form input,
+.modal-form select,
+.modal-form textarea {
   width: 100%;
-  border: 1px solid #d7d7d7;
-  border-radius: 8px;
-  padding: 9px 10px;
+  border: 1px solid #d9d9d9;
+  border-radius: 7px;
+  padding: 7px 8px;
   font: inherit;
+  font-size: 13px;
 }
 
 .menu-form textarea,
-.item-form textarea {
+.modal-form textarea {
   grid-column: 1 / -1;
+  min-height: 52px;
   resize: vertical;
 }
 
 .menu-form input[type="file"],
-.item-form input[type="file"] {
-  padding: 8px;
+.modal-form input[type="file"] {
+  padding: 7px;
 }
 
 .flag-grid {
   grid-column: 1 / -1;
   display: flex;
-  gap: 16px;
+  gap: 10px;
   flex-wrap: wrap;
-  margin-top: 4px;
+  margin-top: 2px;
 }
 
 .flag-grid label {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
+  font-size: 12px;
   font-weight: 600;
-}
-
-.menu-items-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.menu-item-card {
-  border: 1px solid #f0d1d1;
-  border-radius: 12px;
-  background: #fffafa;
-  padding: 10px;
-}
-
-.item-top {
-  display: grid;
-  grid-template-columns: 86px 1fr;
-  gap: 10px;
-  margin-bottom: 8px;
-}
-
-.item-image {
-  width: 86px;
-  height: 86px;
-  border-radius: 10px;
-  object-fit: cover;
-  border: 1px solid #e7d1d1;
-  background: #ffffff;
-}
-
-.item-badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.badge {
-  border-radius: 999px;
-  padding: 3px 8px;
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  border: 1px solid #e7b8b8;
-  color: #7f1d1d;
-  background: #fff7f7;
-}
-
-.badge.stock-out {
-  background: #7f1d1d;
-  color: #ffffff;
-  border-color: #7f1d1d;
-}
-
-.item-form {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.item-actions {
-  grid-column: 1 / -1;
-  display: flex;
-  gap: 8px;
-}
-
-.row-btn {
-  height: 36px;
-  border: none;
-  border-radius: 8px;
-  padding: 0 12px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.row-btn.save {
-  background: #16a34a;
-  color: #ffffff;
-}
-
-.row-btn.delete {
-  background: #b91c1c;
-  color: #ffffff;
 }
 
 .message {
@@ -211,19 +132,290 @@ body {
   color: #991b1b;
 }
 
+.menu-category-sections {
+  display: grid;
+  gap: 12px;
+}
+
+.category-section {
+  border: 1px solid #f4e5e5;
+  border-radius: 10px;
+  padding: 9px;
+  background: #fffdfd;
+}
+
+.category-title {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 800;
+  color: #7f1d1d;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 8px;
+}
+
+.menu-item-card {
+  position: relative;
+  border: 1px solid #ecdada;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 8px;
+  box-shadow: 0 3px 10px rgba(20, 20, 20, 0.04);
+}
+
+.card-menu-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 28px;
+  height: 28px;
+  border: 1px solid #e5d0d0;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #6b7280;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.card-menu {
+  position: absolute;
+  right: 6px;
+  top: 38px;
+  z-index: 8;
+  width: 148px;
+  border: 1px solid #ecdada;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 12px 24px rgba(17, 24, 39, 0.14);
+  overflow: hidden;
+}
+
+.card-menu.hidden {
+  display: none;
+}
+
+.card-menu-item {
+  width: 100%;
+  border: none;
+  border-bottom: 1px solid #f5ebeb;
+  background: #ffffff;
+  text-align: left;
+  padding: 9px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #111827;
+  cursor: pointer;
+}
+
+.card-menu-item:last-child {
+  border-bottom: none;
+}
+
+.card-menu-item:hover {
+  background: #fff6f6;
+}
+
+.card-top {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: 8px;
+  margin-bottom: 6px;
+  padding-right: 32px;
+}
+
+.item-image {
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 1px solid #e7d4d4;
+  background: #ffffff;
+}
+
+.item-name {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.25;
+  color: #111827;
+}
+
+.item-price {
+  margin: 4px 0 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: #7f1d1d;
+}
+
+.item-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.badge {
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border: 1px solid #e7b8b8;
+  color: #7f1d1d;
+  background: #fff7f7;
+}
+
+.stock-row {
+  margin-top: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.stock-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #374151;
+}
+
+.stock-label input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.46);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px;
+  z-index: 90;
+}
+
+.modal.hidden {
+  display: none;
+}
+
+.modal-content {
+  width: min(520px, 100%);
+  max-height: 84vh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 12px;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--red-dark);
+}
+
+.icon-btn {
+  width: 30px;
+  height: 30px;
+  border: 1px solid #e5d0d0;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #6b7280;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.modal-body {
+  display: grid;
+  gap: 8px;
+}
+
+.modal-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.details-grid {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.details-row {
+  border: 1px solid #f3e6e6;
+  border-radius: 8px;
+  padding: 7px 8px;
+  background: #fffdfd;
+}
+
 @media (max-width: 980px) {
-  .menu-form,
-  .item-form {
-    grid-template-columns: 1fr;
+  .menu-form {
+    grid-template-columns: 1fr 1fr;
   }
 
-  .menu-items-grid {
-    grid-template-columns: 1fr;
+  .cards-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .menu-header {
     flex-direction: column;
     align-items: flex-start;
     gap: 8px;
+  }
+}
+
+@media (max-width: 560px) {
+  .menu-main {
+    padding: 10px;
+    gap: 10px;
+  }
+
+  .menu-form,
+  .modal-form {
+    grid-template-columns: 1fr;
+  }
+
+  .cards-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .menu-item-card {
+    padding: 7px;
+  }
+
+  .card-top {
+    grid-template-columns: 50px 1fr;
+    gap: 6px;
+  }
+
+  .item-image {
+    width: 50px;
+    height: 50px;
   }
 }

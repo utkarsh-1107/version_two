@@ -2,11 +2,34 @@ const logoutBtn = document.getElementById("logout-btn");
 const createForm = document.getElementById("create-menu-form");
 const createMessage = document.getElementById("create-message");
 const itemsMessage = document.getElementById("items-message");
-const menuItemsGrid = document.getElementById("menu-items-grid");
+const categorySectionsEl = document.getElementById("menu-category-sections");
+const modalEl = document.getElementById("menu-item-modal");
+const modalTitleEl = document.getElementById("modal-title");
+const modalBodyEl = document.getElementById("modal-body");
+const modalCloseBtn = document.getElementById("modal-close-btn");
+
+const CATEGORY_ORDER = [
+  "Appetizers",
+  "Wraps",
+  "Wings",
+  "Sandwiches",
+  "Hot Dogs",
+  "Full Leg",
+  "Drumsticks",
+  "Extras"
+];
+
+const CATEGORY_SET = new Set(CATEGORY_ORDER);
+let menuItems = [];
 
 function setMessage(target, text = "") {
   if (!target) return;
   target.textContent = text;
+}
+
+function clearMessages() {
+  setMessage(createMessage, "");
+  setMessage(itemsMessage, "");
 }
 
 async function apiFetch(url, options = {}) {
@@ -24,6 +47,36 @@ function boolFlag(value, fallback = false) {
   return Boolean(fallback);
 }
 
+function normalizeCategoryName(category = "") {
+  const raw = String(category || "").trim().toLowerCase();
+  if (!raw) return "Extras";
+  if (raw === "hotdogs") return "Hot Dogs";
+  const byTitleCase = raw
+    .split(/\s+/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+  return CATEGORY_SET.has(byTitleCase) ? byTitleCase : "Extras";
+}
+
+function getOrderedGroupedItems(items) {
+  const grouped = new Map();
+  CATEGORY_ORDER.forEach((category) => grouped.set(category, []));
+
+  items.forEach((item) => {
+    const category = normalizeCategoryName(item?.category || "");
+    grouped.get(category).push(item);
+  });
+
+  CATEGORY_ORDER.forEach((category) => {
+    grouped.get(category).sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+  });
+
+  return CATEGORY_ORDER.map((category) => ({
+    category,
+    items: grouped.get(category) || []
+  })).filter((section) => section.items.length > 0);
+}
+
 function getFallbackImage(item = {}) {
   const text = `${String(item?.name || "")} ${String(item?.category || "")}`.toLowerCase();
   if (text.includes("sausage")) return "/icons/csausages.png";
@@ -38,6 +91,96 @@ function getFallbackImage(item = {}) {
   return "/icons/dip.png";
 }
 
+function getItemById(itemId) {
+  const id = Number(itemId);
+  return menuItems.find((entry) => Number(entry.id) === id) || null;
+}
+
+function closeAllCardMenus() {
+  categorySectionsEl.querySelectorAll(".card-menu").forEach((menu) => {
+    menu.classList.add("hidden");
+  });
+}
+
+function toggleCardMenu(menuEl) {
+  const willOpen = menuEl.classList.contains("hidden");
+  closeAllCardMenus();
+  menuEl.classList.toggle("hidden", !willOpen);
+}
+
+function cardTemplate(item) {
+  const card = document.createElement("article");
+  card.className = "menu-item-card";
+  card.dataset.id = String(item.id);
+  const inStock = boolFlag(item.in_stock, true);
+  const imageSrc = String(item.image_path || "").trim() || getFallbackImage(item);
+
+  card.innerHTML = `
+    <button class="card-menu-btn" type="button" aria-label="Open actions">⋮</button>
+    <div class="card-menu hidden">
+      <button class="card-menu-item" data-action="view-details" type="button">View Details</button>
+      <button class="card-menu-item" data-action="edit-item" type="button">Edit Item</button>
+      <button class="card-menu-item" data-action="update-image" type="button">Update Image</button>
+      <button class="card-menu-item" data-action="duplicate-item" type="button">Duplicate Item</button>
+      <button class="card-menu-item" data-action="delete-item" type="button">Delete Item</button>
+    </div>
+
+    <div class="card-top">
+      <img class="item-image" src="${imageSrc}" alt="${String(item.name || "").replaceAll('"', "&quot;")}" />
+      <div>
+        <h4 class="item-name">${String(item.name || "")}</h4>
+        <p class="item-price">Rs ${Number(item.price || 0).toFixed(2)}</p>
+      </div>
+    </div>
+
+    <div class="item-badges">
+      ${boolFlag(item.is_peri_peri) ? '<span class="badge">Peri Peri</span>' : ""}
+      ${boolFlag(item.has_cheese) ? '<span class="badge">Cheese</span>' : ""}
+      ${boolFlag(item.is_tandoori) ? '<span class="badge">Tandoori</span>' : ""}
+    </div>
+
+    <div class="stock-row">
+      <label class="stock-label">
+        <input class="availability-toggle" data-item-id="${item.id}" type="checkbox" ${inStock ? "checked" : ""} />
+        <span>${inStock ? "Available" : "Out of Stock"}</span>
+      </label>
+    </div>
+  `;
+
+  return card;
+}
+
+function sectionTemplate(category, items) {
+  const section = document.createElement("section");
+  section.className = "category-section";
+  const title = document.createElement("h3");
+  title.className = "category-title";
+  title.textContent = category;
+
+  const grid = document.createElement("div");
+  grid.className = "cards-grid";
+  items.forEach((item) => {
+    grid.appendChild(cardTemplate(item));
+  });
+
+  section.appendChild(title);
+  section.appendChild(grid);
+  return section;
+}
+
+function renderItems() {
+  if (!categorySectionsEl) return;
+  categorySectionsEl.innerHTML = "";
+  const sections = getOrderedGroupedItems(menuItems);
+  if (sections.length === 0) {
+    categorySectionsEl.innerHTML = '<p class="message">No menu items found.</p>';
+    return;
+  }
+  sections.forEach((section) => {
+    categorySectionsEl.appendChild(sectionTemplate(section.category, section.items));
+  });
+}
+
 async function readFileAsDataUrl(file) {
   if (!file) return "";
   return new Promise((resolve, reject) => {
@@ -48,58 +191,19 @@ async function readFileAsDataUrl(file) {
   });
 }
 
-function itemCardTemplate(item) {
-  const card = document.createElement("article");
-  card.className = "menu-item-card";
+function openModal(title, bodyHtml) {
+  if (!modalEl || !modalTitleEl || !modalBodyEl) return;
+  modalTitleEl.textContent = title;
+  modalBodyEl.innerHTML = bodyHtml;
+  modalEl.classList.remove("hidden");
+  modalEl.setAttribute("aria-hidden", "false");
+}
 
-  const imageSrc = String(item.image_path || "").trim() || getFallbackImage(item);
-  const inStock = boolFlag(item.in_stock, true);
-
-  card.innerHTML = `
-    <div class="item-top">
-      <img class="item-image" src="${imageSrc}" alt="${String(item.name || "").replaceAll('"', "&quot;")}" />
-      <div>
-        <div class="item-badges">
-          ${boolFlag(item.is_peri_peri) ? '<span class="badge">Peri Peri</span>' : ""}
-          ${boolFlag(item.has_cheese) ? '<span class="badge">Cheese</span>' : ""}
-          ${boolFlag(item.is_tandoori) ? '<span class="badge">Tandoori</span>' : ""}
-          <span class="badge ${inStock ? "" : "stock-out"}">${inStock ? "Available" : "Out of Stock"}</span>
-        </div>
-      </div>
-    </div>
-    <form class="item-form" action="javascript:void(0);">
-      <input type="text" class="field-name" value="${String(item.name || "").replaceAll('"', "&quot;")}" required />
-      <input type="number" class="field-price" min="0" step="0.01" value="${Number(item.price || 0)}" required />
-      <select class="field-category">
-        <option value="Wraps" ${item.category === "Wraps" ? "selected" : ""}>Wraps</option>
-        <option value="Wings" ${item.category === "Wings" ? "selected" : ""}>Wings</option>
-        <option value="Sandwiches" ${item.category === "Sandwiches" ? "selected" : ""}>Sandwiches</option>
-        <option value="Hot Dogs" ${item.category === "Hot Dogs" ? "selected" : ""}>Hot Dogs</option>
-        <option value="Full Leg" ${item.category === "Full Leg" ? "selected" : ""}>Full Leg</option>
-        <option value="Drumsticks" ${item.category === "Drumsticks" ? "selected" : ""}>Drumsticks</option>
-        <option value="Extras" ${item.category === "Extras" ? "selected" : ""}>Extras</option>
-      </select>
-      <input type="number" class="field-prep-time" min="0" step="1" value="${Number(item.prep_time_minutes || 0)}" required />
-      <textarea class="field-description" rows="2" placeholder="Description (optional)">${String(item.description || "")}</textarea>
-      <input type="file" class="field-image" accept="image/*" />
-
-      <div class="flag-grid">
-        <label><input type="checkbox" class="field-peri" ${boolFlag(item.is_peri_peri) ? "checked" : ""} /> Peri Peri</label>
-        <label><input type="checkbox" class="field-cheese" ${boolFlag(item.has_cheese) ? "checked" : ""} /> Cheese</label>
-        <label><input type="checkbox" class="field-tandoori" ${boolFlag(item.is_tandoori) ? "checked" : ""} /> Tandoori</label>
-        <label><input type="checkbox" class="field-in-stock" ${inStock ? "checked" : ""} /> Available</label>
-        <label><input type="checkbox" class="field-clear-image" /> Remove Current Image</label>
-      </div>
-
-      <div class="item-actions">
-        <button class="row-btn save" type="submit">Save</button>
-        <button class="row-btn delete" type="button" data-action="delete">Delete</button>
-      </div>
-    </form>
-  `;
-
-  card.dataset.id = String(item.id);
-  return card;
+function closeModal() {
+  if (!modalEl || !modalBodyEl) return;
+  modalBodyEl.innerHTML = "";
+  modalEl.classList.add("hidden");
+  modalEl.setAttribute("aria-hidden", "true");
 }
 
 async function fetchCurrentUser() {
@@ -133,22 +237,94 @@ async function fetchItems() {
     }
     throw new Error(payload.error || "Failed to fetch menu items.");
   }
-  return Array.isArray(payload) ? payload : [];
+  menuItems = Array.isArray(payload) ? payload : [];
+  renderItems();
 }
 
-async function renderItems() {
-  const items = await fetchItems();
-  menuItemsGrid.innerHTML = "";
-  items.forEach((item) => {
-    menuItemsGrid.appendChild(itemCardTemplate(item));
+function buildCategoryOptions(selectedCategory = "Extras") {
+  return CATEGORY_ORDER.map((category) => {
+    const selected = normalizeCategoryName(selectedCategory) === category ? "selected" : "";
+    return `<option value="${category}" ${selected}>${category}</option>`;
+  }).join("");
+}
+
+function openDetailsModal(item) {
+  const imageSrc = String(item.image_path || "").trim() || getFallbackImage(item);
+  const html = `
+    <div class="details-grid">
+      <img class="item-image" src="${imageSrc}" alt="${String(item.name || "").replaceAll('"', "&quot;")}" />
+      <div class="details-row"><strong>Name:</strong> ${String(item.name || "")}</div>
+      <div class="details-row"><strong>Category:</strong> ${normalizeCategoryName(item.category || "")}</div>
+      <div class="details-row"><strong>Price:</strong> Rs ${Number(item.price || 0).toFixed(2)}</div>
+      <div class="details-row"><strong>Description:</strong> ${String(item.description || "-")}</div>
+      <div class="details-row"><strong>Peri Peri:</strong> ${boolFlag(item.is_peri_peri) ? "Yes" : "No"}</div>
+      <div class="details-row"><strong>Cheese:</strong> ${boolFlag(item.has_cheese) ? "Yes" : "No"}</div>
+      <div class="details-row"><strong>Tandoori:</strong> ${boolFlag(item.is_tandoori) ? "Yes" : "No"}</div>
+      <div class="details-row"><strong>Status:</strong> ${boolFlag(item.in_stock, true) ? "Available" : "Out of Stock"}</div>
+    </div>
+  `;
+  openModal("Item Details", html);
+}
+
+function openEditModal(item, imageOnly = false) {
+  const html = imageOnly
+    ? `
+      <form id="modal-image-form" class="modal-form" action="javascript:void(0);">
+        <input id="modal-image-file" type="file" accept="image/*" required />
+        <label class="stock-label"><input id="modal-clear-image" type="checkbox" /> Remove existing image</label>
+        <div class="modal-actions">
+          <button class="btn create-btn" type="submit">Save Image</button>
+        </div>
+      </form>
+    `
+    : `
+      <form id="modal-edit-form" class="modal-form" action="javascript:void(0);">
+        <input id="modal-name" type="text" value="${String(item.name || "").replaceAll('"', "&quot;")}" required />
+        <input id="modal-price" type="number" min="0" step="0.01" value="${Number(item.price || 0)}" required />
+        <select id="modal-category">${buildCategoryOptions(item.category || "Extras")}</select>
+        <input id="modal-prep-time" type="number" min="0" step="1" value="${Number(item.prep_time_minutes || 0)}" required />
+        <textarea id="modal-description" rows="2" placeholder="Description (optional)">${String(item.description || "")}</textarea>
+        <input id="modal-image-file" type="file" accept="image/*" />
+
+        <div class="flag-grid">
+          <label><input id="modal-peri" type="checkbox" ${boolFlag(item.is_peri_peri) ? "checked" : ""} /> Peri Peri</label>
+          <label><input id="modal-cheese" type="checkbox" ${boolFlag(item.has_cheese) ? "checked" : ""} /> Cheese</label>
+          <label><input id="modal-tandoori" type="checkbox" ${boolFlag(item.is_tandoori) ? "checked" : ""} /> Tandoori</label>
+          <label><input id="modal-in-stock" type="checkbox" ${boolFlag(item.in_stock, true) ? "checked" : ""} /> Available</label>
+          <label><input id="modal-clear-image" type="checkbox" /> Remove image</label>
+        </div>
+
+        <div class="modal-actions">
+          <button class="btn create-btn" type="submit">Save Changes</button>
+        </div>
+      </form>
+    `;
+  openModal(imageOnly ? "Update Item Image" : "Edit Item", html);
+  modalBodyEl.dataset.itemId = String(item.id);
+  modalBodyEl.dataset.mode = imageOnly ? "image" : "edit";
+}
+
+async function updateAvailability(itemId, inStock) {
+  const response = await apiFetch(`/menu/${itemId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ in_stock: Boolean(inStock) })
   });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || "Failed to update item availability.");
+  }
+  const target = getItemById(itemId);
+  if (target) target.in_stock = Boolean(inStock);
+  renderItems();
 }
 
 async function createItem(event) {
   event.preventDefault();
+  clearMessages();
   const name = String(document.getElementById("create-name")?.value || "").trim();
   const price = Number(document.getElementById("create-price")?.value || 0);
-  const category = String(document.getElementById("create-category")?.value || "").trim();
+  const category = normalizeCategoryName(document.getElementById("create-category")?.value || "Extras");
   const prepTime = Number(document.getElementById("create-prep-time")?.value || 0);
   const description = String(document.getElementById("create-description")?.value || "").trim();
   const imageFile = document.getElementById("create-image")?.files?.[0] || null;
@@ -185,57 +361,187 @@ async function createItem(event) {
   document.getElementById("create-prep-time").value = "10";
   document.getElementById("create-in-stock").checked = true;
   setMessage(createMessage, "Menu item created.");
-  await renderItems();
+  await fetchItems();
 }
 
-async function saveItem(card) {
-  const itemId = Number(card.dataset.id);
-  if (!Number.isInteger(itemId) || itemId <= 0) return;
-  const imageFile = card.querySelector(".field-image")?.files?.[0] || null;
+async function duplicateItem(item) {
   const payload = {
-    name: String(card.querySelector(".field-name")?.value || "").trim(),
-    price: Number(card.querySelector(".field-price")?.value || 0),
-    category: String(card.querySelector(".field-category")?.value || "").trim(),
-    prep_time_minutes: Number(card.querySelector(".field-prep-time")?.value || 0),
-    description: String(card.querySelector(".field-description")?.value || "").trim(),
-    is_peri_peri: Boolean(card.querySelector(".field-peri")?.checked),
-    has_cheese: Boolean(card.querySelector(".field-cheese")?.checked),
-    is_tandoori: Boolean(card.querySelector(".field-tandoori")?.checked),
-    in_stock: Boolean(card.querySelector(".field-in-stock")?.checked),
-    clear_image: Boolean(card.querySelector(".field-clear-image")?.checked)
+    name: `${String(item.name || "").trim()} (Copy)`,
+    price: Number(item.price || 0),
+    category: normalizeCategoryName(item.category || "Extras"),
+    prep_time_minutes: Number(item.prep_time_minutes || 0),
+    description: String(item.description || ""),
+    image_path: item.image_path ? String(item.image_path) : null,
+    is_peri_peri: boolFlag(item.is_peri_peri),
+    has_cheese: boolFlag(item.has_cheese),
+    is_tandoori: boolFlag(item.is_tandoori),
+    in_stock: boolFlag(item.in_stock, true)
+  };
+  const response = await apiFetch("/menu", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(result.error || "Failed to duplicate item.");
+  }
+  setMessage(itemsMessage, "Item duplicated.");
+  await fetchItems();
+}
+
+async function deleteItem(item) {
+  if (!window.confirm(`Delete "${item.name}"?`)) return;
+  const response = await apiFetch(`/menu/${item.id}`, { method: "DELETE" });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(result.error || "Failed to delete item.");
+  }
+  setMessage(itemsMessage, "Item deleted.");
+  await fetchItems();
+}
+
+async function handleCardMenuAction(action, item) {
+  clearMessages();
+  if (!item) return;
+  if (action === "view-details") {
+    openDetailsModal(item);
+    return;
+  }
+  if (action === "edit-item") {
+    openEditModal(item, false);
+    return;
+  }
+  if (action === "update-image") {
+    openEditModal(item, true);
+    return;
+  }
+  if (action === "duplicate-item") {
+    await duplicateItem(item);
+    return;
+  }
+  if (action === "delete-item") {
+    await deleteItem(item);
+  }
+}
+
+async function handleModalSubmit(event) {
+  const imageForm = event.target.closest("#modal-image-form");
+  const editForm = event.target.closest("#modal-edit-form");
+  if (!imageForm && !editForm) return;
+  event.preventDefault();
+
+  const itemId = Number(modalBodyEl.dataset.itemId || 0);
+  const item = getItemById(itemId);
+  if (!item) {
+    setMessage(itemsMessage, "Item not found.");
+    closeModal();
+    return;
+  }
+
+  if (imageForm) {
+    const payload = {};
+    const imageFile = document.getElementById("modal-image-file")?.files?.[0] || null;
+    const clearImage = Boolean(document.getElementById("modal-clear-image")?.checked);
+    if (imageFile) {
+      payload.image_data_url = await readFileAsDataUrl(imageFile);
+      payload.image_filename = imageFile.name || "";
+    }
+    if (clearImage) payload.clear_image = true;
+    if (!payload.image_data_url && !payload.clear_image) {
+      setMessage(itemsMessage, "Please select an image or choose remove image.");
+      return;
+    }
+    const response = await apiFetch(`/menu/${item.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setMessage(itemsMessage, result.error || "Failed to update item image.");
+      return;
+    }
+    closeModal();
+    setMessage(itemsMessage, "Item image updated.");
+    await fetchItems();
+    return;
+  }
+
+  const payload = {
+    name: String(document.getElementById("modal-name")?.value || "").trim(),
+    price: Number(document.getElementById("modal-price")?.value || 0),
+    category: normalizeCategoryName(document.getElementById("modal-category")?.value || "Extras"),
+    prep_time_minutes: Number(document.getElementById("modal-prep-time")?.value || 0),
+    description: String(document.getElementById("modal-description")?.value || "").trim(),
+    is_peri_peri: Boolean(document.getElementById("modal-peri")?.checked),
+    has_cheese: Boolean(document.getElementById("modal-cheese")?.checked),
+    is_tandoori: Boolean(document.getElementById("modal-tandoori")?.checked),
+    in_stock: Boolean(document.getElementById("modal-in-stock")?.checked),
+    clear_image: Boolean(document.getElementById("modal-clear-image")?.checked)
   };
 
+  const imageFile = document.getElementById("modal-image-file")?.files?.[0] || null;
   if (imageFile) {
     payload.image_data_url = await readFileAsDataUrl(imageFile);
     payload.image_filename = imageFile.name || "";
   }
 
-  const response = await apiFetch(`/menu/${itemId}`, {
+  const response = await apiFetch(`/menu/${item.id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
   const result = await response.json().catch(() => ({}));
   if (!response.ok) {
-    setMessage(itemsMessage, result.error || "Failed to update menu item.");
+    setMessage(itemsMessage, result.error || "Failed to update item.");
     return;
   }
-  setMessage(itemsMessage, "Menu item updated.");
-  await renderItems();
+  closeModal();
+  setMessage(itemsMessage, "Item updated.");
+  await fetchItems();
 }
 
-async function deleteItem(card) {
-  const itemId = Number(card.dataset.id);
-  if (!Number.isInteger(itemId) || itemId <= 0) return;
-  if (!window.confirm("Delete this menu item?")) return;
-  const response = await apiFetch(`/menu/${itemId}`, { method: "DELETE" });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    setMessage(itemsMessage, result.error || "Failed to delete menu item.");
+async function handleGridClick(event) {
+  const menuBtn = event.target.closest(".card-menu-btn");
+  if (menuBtn) {
+    const card = menuBtn.closest(".menu-item-card");
+    const menu = card?.querySelector(".card-menu");
+    if (!menu) return;
+    toggleCardMenu(menu);
     return;
   }
-  setMessage(itemsMessage, "Menu item deleted.");
-  await renderItems();
+
+  const actionBtn = event.target.closest(".card-menu-item");
+  if (actionBtn) {
+    const action = actionBtn.dataset.action;
+    const card = actionBtn.closest(".menu-item-card");
+    closeAllCardMenus();
+    const item = getItemById(card?.dataset.id);
+    try {
+      await handleCardMenuAction(action, item);
+    } catch (error) {
+      setMessage(itemsMessage, error.message || "Action failed.");
+    }
+    return;
+  }
+
+  if (!event.target.closest(".card-menu")) {
+    closeAllCardMenus();
+  }
+}
+
+async function handleGridChange(event) {
+  const toggle = event.target.closest(".availability-toggle");
+  if (!toggle) return;
+  const itemId = Number(toggle.dataset.itemId || 0);
+  try {
+    await updateAvailability(itemId, toggle.checked);
+    setMessage(itemsMessage, `Item marked as ${toggle.checked ? "Available" : "Out of Stock"}.`);
+  } catch (error) {
+    toggle.checked = !toggle.checked;
+    setMessage(itemsMessage, error.message || "Failed to update availability.");
+  }
 }
 
 async function handleLogout() {
@@ -255,30 +561,50 @@ async function init() {
 
   if (createForm) {
     createForm.addEventListener("submit", async (event) => {
-      await createItem(event);
+      try {
+        await createItem(event);
+      } catch (error) {
+        setMessage(createMessage, error.message || "Failed to create item.");
+      }
     });
   }
 
-  if (menuItemsGrid) {
-    menuItemsGrid.addEventListener("submit", async (event) => {
-      const form = event.target.closest(".item-form");
-      if (!form) return;
-      event.preventDefault();
-      const card = form.closest(".menu-item-card");
-      if (!card) return;
-      await saveItem(card);
+  if (categorySectionsEl) {
+    categorySectionsEl.addEventListener("click", async (event) => {
+      await handleGridClick(event);
     });
-
-    menuItemsGrid.addEventListener("click", async (event) => {
-      const deleteBtn = event.target.closest("button[data-action='delete']");
-      if (!deleteBtn) return;
-      const card = deleteBtn.closest(".menu-item-card");
-      if (!card) return;
-      await deleteItem(card);
+    categorySectionsEl.addEventListener("change", async (event) => {
+      await handleGridChange(event);
     });
   }
 
-  await renderItems();
+  if (modalCloseBtn) {
+    modalCloseBtn.addEventListener("click", () => {
+      closeModal();
+    });
+  }
+
+  if (modalEl) {
+    modalEl.addEventListener("click", (event) => {
+      if (event.target === modalEl) {
+        closeModal();
+      }
+    });
+  }
+
+  if (modalBodyEl) {
+    modalBodyEl.addEventListener("submit", async (event) => {
+      await handleModalSubmit(event);
+    });
+  }
+
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest(".menu-item-card")) {
+      closeAllCardMenus();
+    }
+  });
+
+  await fetchItems();
 }
 
 init().catch((error) => {
