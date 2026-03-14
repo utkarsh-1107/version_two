@@ -380,14 +380,14 @@ function isCheeseItemLabel(label = "") {
 }
 
 function getCornerAccentType(label = "", item = null) {
-  const hasPeri =
-    item && item.is_peri_peri !== undefined
-      ? isTruthyFlag(item.is_peri_peri, isPeriPeriItemLabel(label))
-      : isPeriPeriItemLabel(label);
-  const hasCheese =
-    item && item.has_cheese !== undefined
-      ? isTruthyFlag(item.has_cheese, isCheeseItemLabel(label))
-      : isCheeseItemLabel(label);
+  const hasPeri = Boolean(
+    (item && item.is_peri_peri !== undefined ? isTruthyFlag(item.is_peri_peri, false) : false) ||
+      isPeriPeriItemLabel(label)
+  );
+  const hasCheese = Boolean(
+    (item && item.has_cheese !== undefined ? isTruthyFlag(item.has_cheese, false) : false) ||
+      isCheeseItemLabel(label)
+  );
   if (hasPeri && hasCheese) return "peri-cheese";
   if (hasPeri) return "peri";
   if (hasCheese) return "cheese";
