@@ -202,6 +202,7 @@ body {
   position: absolute;
   top: 6px;
   right: 6px;
+  z-index: 12;
   width: 28px;
   height: 28px;
   border: 1px solid #e5d0d0;
@@ -217,7 +218,7 @@ body {
   position: absolute;
   right: 6px;
   top: 38px;
-  z-index: 8;
+  z-index: 14;
   width: 148px;
   border: 1px solid #ecdada;
   border-radius: 8px;

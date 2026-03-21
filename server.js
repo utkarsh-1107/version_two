@@ -62,6 +62,14 @@ const BUSINESS_INFO = {
 };
 
 app.use(express.json({ limit: "8mb" }));
+app.use((req, res, next) => {
+  if (req.path === "/menu-management.css" || req.path === "/menu-management.js") {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+  }
+  next();
+});
 app.use(
   "/icons",
   express.static(path.join(__dirname, "public", "icons"), {

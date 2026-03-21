@@ -135,10 +135,15 @@ function inferFlagsFromItemName(name = "") {
 
 function getResolvedVisualFlags(item = {}) {
   const inferred = inferFlagsFromItemName(item.name || "");
+  const dbPeri = boolFlag(item.is_peri_peri, false);
+  const dbCheese = boolFlag(item.has_cheese, false);
+  const dbTandoori = boolFlag(item.is_tandoori, false);
   return {
-    isPeriPeri: boolFlag(item.is_peri_peri, inferred.isPeriPeri),
-    hasCheese: boolFlag(item.has_cheese, inferred.hasCheese),
-    isTandoori: boolFlag(item.is_tandoori, inferred.isTandoori)
+    // Keep visual state consistent with ordering cards:
+    // explicit DB flag OR name-based inference.
+    isPeriPeri: dbPeri || inferred.isPeriPeri,
+    hasCheese: dbCheese || inferred.hasCheese,
+    isTandoori: dbTandoori || inferred.isTandoori
   };
 }
 
