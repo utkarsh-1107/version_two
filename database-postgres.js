@@ -99,6 +99,7 @@ async function ensureMenuItemAdminColumns() {
   await run("ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS has_cheese BOOLEAN NOT NULL DEFAULT FALSE");
   await run("ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS is_tandoori BOOLEAN NOT NULL DEFAULT FALSE");
   await run("ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS in_stock BOOLEAN NOT NULL DEFAULT TRUE");
+  await run("ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS legacy_variant_migrated BOOLEAN NOT NULL DEFAULT FALSE");
   menuColumnsEnsured = true;
 }
 
@@ -216,6 +217,18 @@ function inferFlagsFromName(name = "") {
   const hasCheese = text.includes("cheese");
   const isTandoori = text.includes("tandoori") || text.includes("tandoor");
   return { isPeriPeri, hasCheese, isTandoori };
+}
+
+function normalizeLegacyPortion(rawPortion = "", baseName = "") {
+  const text = String(rawPortion || "").trim().toLowerCase();
+  const normalizedBase = String(baseName || "").trim().toLowerCase();
+  if (text === "mini") return normalizedBase.includes("sausage") ? "1 pc" : "Mini";
+  if (text === "half") return normalizedBase.includes("sausage") ? "2 pcs" : "Half";
+  if (text === "full") return normalizedBase.includes("sausage") ? "3 pcs" : "Full";
+  if (["1 pc", "1 pcs"].includes(text)) return "1 pc";
+  if (["2 pc", "2 pcs"].includes(text)) return "2 pcs";
+  if (["3 pc", "3 pcs"].includes(text)) return "3 pcs";
+  return "";
 }
 
 function toINDateTime(date = new Date()) {
@@ -578,6 +591,75 @@ async function initDatabase() {
       }
     }
 
+    const targets = new Set(["BBQ Chicken Breast", "Tandoori Chicken Breast", "Grilled Chicken Sausages"]);
+    const appetizerCategory = await get("SELECT id FROM categories WHERE name = 'Appetizers'");
+    if (appetizerCategory?.id) {
+      const legacyRows = await all(
+        `
+        SELECT mi.id, mi.name, mi.price, mi.prep_time_minutes, COALESCE(mi.in_stock, TRUE) AS in_stock
+        FROM menu_items mi
+        WHERE mi.category_id = $1
+          AND COALESCE(mi.legacy_variant_migrated, FALSE) = FALSE
+        `,
+        [appetizerCategory.id]
+      );
+
+      for (const row of legacyRows) {
+        const fullName = String(row.name || "").trim();
+        let baseName = "";
+        let suffix = "";
+
+        const splitIndex = fullName.lastIndexOf(" - ");
+        if (splitIndex > 0) {
+          baseName = fullName.slice(0, splitIndex).trim();
+          suffix = fullName.slice(splitIndex + 3).trim();
+        } else {
+          const sausageMatch = fullName.match(/^Grilled Chicken Sausage\s*\(([^)]+)\)$/i);
+          if (sausageMatch) {
+            baseName = "Grilled Chicken Sausages";
+            suffix = String(sausageMatch[1] || "").trim();
+          }
+        }
+        if (!baseName || !targets.has(baseName)) continue;
+
+        const portion = normalizeLegacyPortion(suffix, baseName);
+        if (!portion) continue;
+
+        await run(
+          "INSERT INTO appetizer_groups (name, in_stock) VALUES ($1, $2) ON CONFLICT (name) DO NOTHING",
+          [baseName, Boolean(row.in_stock)]
+        );
+        const group = await get("SELECT id FROM appetizer_groups WHERE name = $1", [baseName]);
+        if (!group?.id) continue;
+
+        const existingVariant = await get(
+          "SELECT id FROM appetizer_variants WHERE group_id = $1 AND portion_name = $2",
+          [group.id, portion]
+        );
+        if (existingVariant?.id) {
+          await run(
+            "UPDATE appetizer_variants SET price = $1, prep_time_minutes = $2 WHERE id = $3",
+            [Number(row.price || 0), Number(row.prep_time_minutes || 0), existingVariant.id]
+          );
+        } else {
+          await run(
+            "INSERT INTO appetizer_variants (group_id, portion_name, price, prep_time_minutes) VALUES ($1, $2, $3, $4)",
+            [group.id, portion, Number(row.price || 0), Number(row.prep_time_minutes || 0)]
+          );
+        }
+
+        const linkedOrders = await get("SELECT COUNT(*)::INTEGER AS total FROM order_items WHERE menu_item_id = $1", [row.id]);
+        if (Number(linkedOrders?.total || 0) > 0) {
+          await run(
+            "UPDATE menu_items SET in_stock = FALSE, legacy_variant_migrated = TRUE WHERE id = $1",
+            [row.id]
+          );
+        } else {
+          await run("DELETE FROM menu_items WHERE id = $1", [row.id]);
+        }
+      }
+    }
+
     await run("COMMIT");
   } catch (error) {
     await run("ROLLBACK");
@@ -614,6 +696,7 @@ async function getMenu() {
       FROM menu_items mi
       INNER JOIN categories c ON c.id = mi.category_id
       WHERE c.name != 'Appetizers'
+        AND COALESCE(mi.legacy_variant_migrated, FALSE) = FALSE
 
       UNION ALL
 
@@ -673,6 +756,7 @@ async function getMenuManagementItems() {
       FROM menu_items mi
       LEFT JOIN categories c ON c.id = mi.category_id
       LEFT JOIN categories extras ON extras.name = 'Extras'
+      WHERE COALESCE(mi.legacy_variant_migrated, FALSE) = FALSE
 
       UNION ALL
 
@@ -702,6 +786,36 @@ async function getMenuManagementItems() {
   );
 }
 
+async function getMenuCategories() {
+  return all(
+    `
+    SELECT id, name
+    FROM categories
+    ORDER BY
+      CASE name
+        WHEN 'Appetizers' THEN 1
+        WHEN 'Wraps' THEN 2
+        WHEN 'Wings' THEN 3
+        WHEN 'Sandwiches' THEN 4
+        WHEN 'Hot Dogs' THEN 5
+        WHEN 'Full Leg' THEN 6
+        WHEN 'Drumsticks' THEN 7
+        WHEN 'Extras' THEN 8
+        ELSE 999
+      END,
+      name ASC
+    `
+  );
+}
+
+async function createMenuCategory(rawName) {
+  const name = String(rawName || "").trim().replace(/\s+/g, " ");
+  if (!name) throw new Error("Category name is required.");
+  const existing = await get("SELECT id, name FROM categories WHERE LOWER(name) = LOWER($1)", [name]);
+  if (existing) return existing;
+  return get("INSERT INTO categories (name) VALUES ($1) RETURNING id, name", [name]);
+}
+
 async function createMenuItem(payload = {}) {
   await ensureMenuItemAdminColumns();
   const categoryId = Number(payload.category_id);
@@ -721,7 +835,7 @@ async function createMenuItem(payload = {}) {
 
   let resolvedCategoryId = Number.isInteger(categoryId) && categoryId > 0 ? categoryId : null;
   if (!resolvedCategoryId && categoryName) {
-    const categoryRow = await get("SELECT id FROM categories WHERE name = $1", [categoryName]);
+    const categoryRow = await createMenuCategory(categoryName);
     resolvedCategoryId = Number(categoryRow?.id || 0) || null;
   }
   if (!resolvedCategoryId) {
@@ -800,9 +914,36 @@ async function updateMenuItem(menuItemId, payload = {}) {
       [id]
     );
     if (!existingGroup) return null;
+    const nextName = payload.name !== undefined ? String(payload.name || "").trim() : String(existingGroup.name || "");
+    if (!nextName) throw new Error("Item name is required.");
     const nextInStock =
       payload.in_stock !== undefined ? toSqlBool(payload.in_stock, true) : toSqlBool(existingGroup.in_stock, true);
-    await run("UPDATE appetizer_groups SET in_stock = $1 WHERE id = $2", [nextInStock, id]);
+    await run("UPDATE appetizer_groups SET name = $1, in_stock = $2 WHERE id = $3", [nextName, nextInStock, id]);
+
+    if (Array.isArray(payload.variants) && payload.variants.length > 0) {
+      for (const rawVariant of payload.variants) {
+        const variantId = Number(rawVariant?.id);
+        if (!Number.isInteger(variantId) || variantId <= 0) continue;
+        const existingVariant = await get(
+          "SELECT id, group_id, portion_name, price, prep_time_minutes FROM appetizer_variants WHERE id = $1",
+          [variantId]
+        );
+        if (!existingVariant || Number(existingVariant.group_id) !== Number(id)) continue;
+        const nextPortion = String(rawVariant?.portion_name || rawVariant?.label || existingVariant.portion_name || "").trim();
+        const nextPrice = rawVariant?.price !== undefined ? Number(rawVariant.price) : Number(existingVariant.price || 0);
+        const nextPrep =
+          rawVariant?.prep_time_minutes !== undefined
+            ? Number(rawVariant.prep_time_minutes)
+            : Number(existingVariant.prep_time_minutes || 0);
+        if (!nextPortion) throw new Error("Variant label is required.");
+        if (!Number.isFinite(nextPrice) || nextPrice < 0) throw new Error("Variant price must be a non-negative number.");
+        if (!Number.isInteger(nextPrep) || nextPrep < 0) throw new Error("Variant prep time must be a non-negative integer.");
+        await run(
+          "UPDATE appetizer_variants SET portion_name = $1, price = $2, prep_time_minutes = $3 WHERE id = $4",
+          [nextPortion, nextPrice, nextPrep, variantId]
+        );
+      }
+    }
     return get(
       `
       SELECT
@@ -862,7 +1003,7 @@ async function updateMenuItem(menuItemId, payload = {}) {
     if (Number.isInteger(categoryId) && categoryId > 0) {
       resolvedCategoryId = categoryId;
     } else if (categoryName) {
-      const categoryRow = await get("SELECT id FROM categories WHERE name = $1", [categoryName]);
+      const categoryRow = await createMenuCategory(categoryName);
       resolvedCategoryId = Number(categoryRow?.id || 0) || null;
     } else {
       resolvedCategoryId = null;
@@ -1081,6 +1222,8 @@ async function attachOrderItems(orderRows) {
       menu_item_id: item.menu_item_id,
       group_id: item.appetizer_group_id,
       variant_id: item.appetizer_variant_id,
+      product_name: item.item_type === "appetizer" ? item.appetizer_group_name : item.menu_item_name,
+      variant: item.item_type === "appetizer" ? item.appetizer_portion_name : null,
       name: displayName,
       quantity: item.quantity,
       line_total: item.line_total
@@ -1437,7 +1580,8 @@ async function deleteUser(userId, actorUserId = null) {
   return result.rowCount > 0;
 }
 
-async function getStats() {
+async function getStats(dateInput = todayIN()) {
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(String(dateInput || "").trim()) ? String(dateInput).trim() : todayIN();
   const row = await get(
     `
     SELECT
@@ -1448,7 +1592,7 @@ async function getStats() {
     FROM orders
     WHERE order_date = $1
     `,
-    [todayIN()]
+    [date]
   );
 
   return {
@@ -1459,9 +1603,9 @@ async function getStats() {
   };
 }
 
-async function getDailyCloseReport() {
-  const date = todayIN();
-  const stats = await getStats();
+async function getDailyCloseReport(dateInput = todayIN()) {
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(String(dateInput || "").trim()) ? String(dateInput).trim() : todayIN();
+  const stats = await getStats(date);
 
   const statusRows = await all(
     `
@@ -1500,9 +1644,40 @@ async function getDailyCloseReport() {
     [date]
   );
 
+  const totalItemsRow = await get(
+    `
+    SELECT COALESCE(SUM(oi.quantity), 0) AS total_items_sold
+    FROM order_items oi
+    INNER JOIN orders o ON o.id = oi.order_id
+    WHERE o.order_date = $1
+    `,
+    [date]
+  );
+
+  const peakHourRow = await get(
+    `
+    SELECT
+      TO_CHAR(created_at, 'HH24:00') AS hour_slot,
+      COUNT(*) AS order_count
+    FROM orders
+    WHERE order_date = $1
+    GROUP BY TO_CHAR(created_at, 'HH24:00')
+    ORDER BY order_count DESC, hour_slot DESC
+    LIMIT 1
+    `,
+    [date]
+  );
+
+  const totalItemsSold = Number(totalItemsRow?.total_items_sold || 0);
+  const aov = Number(stats.total_orders || 0) > 0 ? Number(stats.grand_total || 0) / Number(stats.total_orders || 0) : 0;
+
   return {
     date,
     summary: stats,
+    payment_split: {
+      cash_total: Number(stats.cash_total || 0),
+      upi_total: Number(stats.upi_total || 0)
+    },
     by_status: statusRows.reduce((acc, row) => {
       acc[row.status] = Number(row.count || 0);
       return acc;
@@ -1511,10 +1686,25 @@ async function getDailyCloseReport() {
       acc[row.order_type || "dine_in"] = Number(row.count || 0);
       return acc;
     }, {}),
-    top_items: topItemRows.map((row) => ({
-      name: row.item_name,
-      quantity: Number(row.qty || 0)
-    }))
+    top_items: topItemRows.map((row) => {
+      const qty = Number(row.qty || 0);
+      const contributionPercent = totalItemsSold > 0 ? (qty / totalItemsSold) * 100 : 0;
+      return {
+        name: row.item_name,
+        quantity: qty,
+        contribution_percent: Number(contributionPercent.toFixed(2))
+      };
+    }),
+    business_insights: {
+      average_order_value: Number(aov.toFixed(2)),
+      total_items_sold: totalItemsSold,
+      peak_order_time: peakHourRow?.hour_slot || "N/A",
+      top_item_contribution_percent:
+        totalItemsSold > 0 && topItemRows.length > 0
+          ? Number((((Number(topItemRows[0].qty || 0) / totalItemsSold) * 100) || 0).toFixed(2))
+          : 0
+    },
+    generated_at: toINDateTime()
   };
 }
 
@@ -1683,6 +1873,8 @@ module.exports = {
   deleteUser,
   getMenu,
   getMenuManagementItems,
+  getMenuCategories,
+  createMenuCategory,
   createMenuItem,
   updateMenuItem,
   deleteMenuItem,
