@@ -35,6 +35,10 @@ const runtimeCache = {
   stats: null,
   statsExpiresAt: 0
 };
+const assetAudit = {
+  checked: false,
+  missing: []
+};
 const BUSINESS_INFO = {
   fssaiNumber: "21520046000143",
   licenseNumber: "UDYAM-MH-18-0011811",
@@ -63,7 +67,19 @@ const BUSINESS_INFO = {
 
 app.use(express.json({ limit: "8mb" }));
 app.use((req, res, next) => {
-  if (req.path === "/menu-management.css" || req.path === "/menu-management.js") {
+  if (
+    req.path === "/menu-management.css" ||
+    req.path === "/menu-management.js" ||
+    req.path === "/daily-close-report.css" ||
+    req.path === "/daily-close-report.js" ||
+    req.path === "/components/layout/layout.css" ||
+    req.path === "/components/layout/Header.js" ||
+    req.path === "/components/layout/Sidebar.js" ||
+    req.path === "/components/layout/POSLayout.js" ||
+    req.path === "/components/layout/AdminLayout.js" ||
+    req.path === "/components/layout/AppLayoutRouter.js" ||
+    req.path === "/components/layout/AppLayout.js"
+  ) {
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
@@ -125,6 +141,43 @@ function invalidateRuntimeCache() {
   runtimeCache.stats = null;
   runtimeCache.statsExpiresAt = 0;
 }
+
+function runPublicAssetAudit() {
+  const requiredAssets = [
+    "index.html",
+    "login.html",
+    "menu-management.html",
+    "users.html",
+    "daily-close-report.html",
+    "styles.css",
+    "script.js",
+    "menu-management.css",
+    "menu-management.js",
+    "users.css",
+    "users.js",
+    "daily-close-report.css",
+    "daily-close-report.js",
+    "components/layout/layout.css",
+    "components/layout/Header.js",
+    "components/layout/Sidebar.js",
+    "components/layout/POSLayout.js",
+    "components/layout/AdminLayout.js",
+    "components/layout/AppLayoutRouter.js"
+  ];
+
+  const missing = requiredAssets.filter((relativePath) => {
+    const fullPath = path.join(__dirname, "public", relativePath);
+    return !fs.existsSync(fullPath);
+  });
+
+  assetAudit.checked = true;
+  assetAudit.missing = missing;
+  if (missing.length > 0) {
+    console.error("[asset-audit] Missing required public assets:", missing);
+  }
+}
+
+runPublicAssetAudit();
 
 const menuUploadsDir = path.join(__dirname, "public", "uploads", "menu");
 
@@ -204,6 +257,9 @@ function renderDailyClosePdf(doc, report) {
   const pageWidth = doc.page.width;
   const margin = 40;
   const contentWidth = pageWidth - margin * 2;
+  const reportDate = String(report?.date || "");
+  const generatedAt =
+    report?.generated_at || new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
   let y = margin;
 
   doc.rect(0, 0, pageWidth, 72).fill("#D32F2F");
@@ -215,7 +271,15 @@ function renderDailyClosePdf(doc, report) {
   doc
     .font("Helvetica")
     .fontSize(10)
-    .text(`Daily Close Report - ${report.date}`, margin, 50);
+    .text(`Daily Close Report - ${reportDate}`, margin, 50);
+  doc
+    .fillColor("#FFFFFF")
+    .font("Helvetica")
+    .fontSize(9)
+    .text(`Phone: ${BUSINESS_INFO.phone} | Email: ${BUSINESS_INFO.email}`, margin + 260, 50, {
+      width: 260,
+      align: "right"
+    });
 
   y = 92;
 
@@ -251,16 +315,19 @@ function renderDailyClosePdf(doc, report) {
 
   const status = report.by_status || {};
   const orderType = report.by_order_type || {};
+  const payment = report.payment_split || {};
   drawSectionTitle(doc, "Breakdown", margin, y, contentWidth);
   y += 36;
 
-  const leftWidth = (contentWidth - 16) / 2;
-  const rightX = margin + leftWidth + 16;
+  const blockGap = 10;
+  const blockWidth = (contentWidth - blockGap * 2) / 3;
+  const middleX = margin + blockWidth + blockGap;
+  const rightX = middleX + blockWidth + blockGap;
 
   doc
     .lineWidth(1)
     .strokeColor("#E6A2A2")
-    .roundedRect(margin, y, leftWidth, 92, 6)
+    .roundedRect(margin, y, blockWidth, 92, 6)
     .stroke();
   doc.fillColor("#D32F2F").font("Helvetica-Bold").fontSize(11).text("By Status", margin + 10, y + 10);
   doc.fillColor("#333333").font("Helvetica").fontSize(10);
@@ -272,12 +339,22 @@ function renderDailyClosePdf(doc, report) {
   doc
     .lineWidth(1)
     .strokeColor("#E6A2A2")
-    .roundedRect(rightX, y, leftWidth, 92, 6)
+    .roundedRect(middleX, y, blockWidth, 92, 6)
     .stroke();
-  doc.fillColor("#D32F2F").font("Helvetica-Bold").fontSize(11).text("By Order Type", rightX + 10, y + 10);
+  doc.fillColor("#D32F2F").font("Helvetica-Bold").fontSize(11).text("By Order Type", middleX + 10, y + 10);
   doc.fillColor("#333333").font("Helvetica").fontSize(10);
-  doc.text(`Dine In: ${orderType.dine_in || 0}`, rightX + 10, y + 36);
-  doc.text(`Parcel: ${orderType.parcel || 0}`, rightX + 10, y + 56);
+  doc.text(`Dine In: ${orderType.dine_in || 0}`, middleX + 10, y + 36);
+  doc.text(`Parcel: ${orderType.parcel || 0}`, middleX + 10, y + 56);
+
+  doc
+    .lineWidth(1)
+    .strokeColor("#E6A2A2")
+    .roundedRect(rightX, y, blockWidth, 92, 6)
+    .stroke();
+  doc.fillColor("#D32F2F").font("Helvetica-Bold").fontSize(11).text("Payment Split", rightX + 10, y + 10);
+  doc.fillColor("#333333").font("Helvetica").fontSize(10);
+  doc.text(`Cash: ${formatInr(payment.cash_total || 0)}`, rightX + 10, y + 36);
+  doc.text(`UPI: ${formatInr(payment.upi_total || 0)}`, rightX + 10, y + 56);
 
   y += 110;
   drawSectionTitle(doc, "Item Consumption (Plates)", margin, y, contentWidth);
@@ -329,11 +406,35 @@ function renderDailyClosePdf(doc, report) {
     });
   }
 
+  y += 12;
+  const insights = report.business_insights || {};
+  if (y + 70 > doc.page.height - 48) {
+    doc.addPage();
+    y = margin;
+  }
+  drawSectionTitle(doc, "Business Insights", margin, y, contentWidth);
+  y += 36;
+
+  doc
+    .lineWidth(1)
+    .strokeColor("#E6A2A2")
+    .roundedRect(margin, y, contentWidth, 58, 6)
+    .stroke();
+  doc.fillColor("#333333").font("Helvetica").fontSize(10);
+  doc.text(`Average Order Value: ${formatInr(insights.average_order_value || 0)}`, margin + 10, y + 12);
+  doc.text(`Total Items Sold: ${Number(insights.total_items_sold || 0)} units`, margin + 10, y + 30);
+  doc.text(`Peak Order Time: ${insights.peak_order_time || "N/A"}`, margin + 270, y + 12);
+  doc.text(
+    `Top Item Contribution: ${Number(insights.top_item_contribution_percent || 0).toFixed(1)}%`,
+    margin + 270,
+    y + 30
+  );
+
   doc
     .fillColor("#666666")
     .font("Helvetica")
     .fontSize(9)
-    .text(`Generated: ${new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}`, margin, doc.page.height - 30);
+    .text(`Generated: ${generatedAt}`, margin, doc.page.height - 30);
 
   doc
     .fillColor("#666666")
@@ -490,6 +591,14 @@ app.get("/menu-management", async (req, res) => {
   if (!ensureAdminAccess(req, res)) return;
   res.setHeader("Cache-Control", "no-store");
   return res.sendFile(path.join(__dirname, "public", "menu-management.html"));
+});
+
+app.get("/daily-close-report", async (req, res) => {
+  if (!(await ensureDatabaseReady(res))) return;
+  if (!(await attachRequestUser(req, res))) return;
+  if (!ensureAdminAccess(req, res)) return;
+  res.setHeader("Cache-Control", "no-store");
+  return res.sendFile(path.join(__dirname, "public", "daily-close-report.html"));
 });
 
 function formatOrderCode(order) {
@@ -833,6 +942,11 @@ app.get("/health", async (req, res) => {
     has_pg_user: Boolean(process.env.PGUSER || process.env.POSTGRES_USER),
     has_pg_password: Boolean(process.env.PGPASSWORD || process.env.POSTGRES_PASSWORD)
   };
+  const assets = {
+    checked: assetAudit.checked,
+    status: assetAudit.missing.length === 0 ? "ready" : "missing",
+    missing: assetAudit.missing
+  };
 
   if (initError || pingError) {
     const error = pingError || initError;
@@ -841,14 +955,26 @@ app.get("/health", async (req, res) => {
       error: "Database unavailable.",
       detail: error.message || String(error),
       code: String(error?.code || "UNKNOWN"),
-      config
+      config,
+      assets
+    });
+  }
+
+  if (assetAudit.missing.length > 0) {
+    return res.status(500).json({
+      status: "error",
+      error: "Required public assets are missing.",
+      detail: "Deployment is incomplete. Required page/layout files were not found.",
+      config,
+      assets
     });
   }
 
   return res.json({
     status: "ok",
     database: "ready",
-    config
+    config,
+    assets
   });
 });
 
@@ -1016,9 +1142,21 @@ app.get("/menu", async (req, res) => {
   try {
     if (!(await ensureDatabaseReady(res))) return;
     if (!(await attachRequestUser(req, res))) return;
-    const menu = await db.getMenu();
+    const format = String(req.query.format || "").trim().toLowerCase();
+    const acceptHeader = String(req.headers.accept || "").toLowerCase();
+    const wantsJson =
+      format === "json" ||
+      (acceptHeader.includes("application/json") && !acceptHeader.includes("text/html"));
+
+    if (wantsJson) {
+      const menu = await db.getMenu();
+      res.setHeader("Cache-Control", "no-store");
+      return res.json(menu);
+    }
+
+    if (!ensureAdminAccess(req, res)) return;
     res.setHeader("Cache-Control", "no-store");
-    res.json(menu);
+    return res.sendFile(path.join(__dirname, "public", "menu-management.html"));
   } catch (error) {
     console.error("GET /menu failed:", error);
     res.status(500).json({
@@ -1041,6 +1179,46 @@ app.get("/menu/manage", async (req, res) => {
     res.status(500).json({
       error: "Failed to fetch menu management data.",
       detail: error.message || String(error)
+    });
+  }
+});
+
+app.get("/menu/categories", async (req, res) => {
+  try {
+    if (!(await ensureDatabaseReady(res))) return;
+    if (!(await attachRequestUser(req, res))) return;
+    if (!ensureAdminAccess(req, res)) return;
+    const categories = await db.getMenuCategories();
+    res.setHeader("Cache-Control", "no-store");
+    res.json(categories);
+  } catch (error) {
+    console.error("GET /menu/categories failed:", error);
+    res.status(500).json({
+      error: "Failed to fetch categories.",
+      detail: error.message || String(error)
+    });
+  }
+});
+
+app.post("/menu/categories", async (req, res) => {
+  try {
+    if (!(await ensureDatabaseReady(res))) return;
+    if (!(await attachRequestUser(req, res))) return;
+    if (!ensureAdminAccess(req, res)) return;
+    if (READ_ONLY) {
+      return res.status(405).json({ error: "Read-only mode is enabled." });
+    }
+    const name = String(req.body?.name || "").trim();
+    if (!name) {
+      return res.status(400).json({ error: "Category name is required." });
+    }
+    const category = await db.createMenuCategory(name);
+    invalidateRuntimeCache();
+    res.status(201).json(category);
+  } catch (error) {
+    console.error("POST /menu/categories failed:", error);
+    res.status(400).json({
+      error: error.message || "Failed to create category."
     });
   }
 });
@@ -1366,7 +1544,10 @@ app.get("/reports/daily-close", async (req, res) => {
     if (!(await ensureDatabaseReady(res))) return;
     if (!(await attachRequestUser(req, res))) return;
     if (!ensureAdminAccess(req, res)) return;
-    const report = await db.getDailyCloseReport();
+    const dateParam = String(req.query.date || "").trim();
+    const reportDate = /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : undefined;
+    const report = await db.getDailyCloseReport(reportDate);
+    res.setHeader("Cache-Control", "no-store");
     res.json(report);
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch daily close report." });
@@ -1378,8 +1559,11 @@ app.get("/reports/daily-close/pdf", async (req, res) => {
     if (!(await ensureDatabaseReady(res))) return;
     if (!(await attachRequestUser(req, res))) return;
     if (!ensureAdminAccess(req, res)) return;
-    const report = await db.getDailyCloseReport();
+    const dateParam = String(req.query.date || "").trim();
+    const reportDate = /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : undefined;
+    const report = await db.getDailyCloseReport(reportDate);
     const filename = `daily-close-${report.date || "report"}.pdf`;
+    const downloadMode = ["1", "true", "yes"].includes(String(req.query.download || "").toLowerCase());
     const doc = new PDFDocument({
       size: "A4",
       margin: 0,
@@ -1390,7 +1574,10 @@ app.get("/reports/daily-close/pdf", async (req, res) => {
     });
 
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `inline; filename=\"${filename}\"`);
+    res.setHeader(
+      "Content-Disposition",
+      `${downloadMode ? "attachment" : "inline"}; filename=\"${filename}\"`
+    );
     doc.pipe(res);
     renderDailyClosePdf(doc, report);
     doc.end();
@@ -1439,29 +1626,6 @@ app.get("/invoices/:id/print", async (req, res) => {
     res.send(html);
   } catch (error) {
     res.status(500).send("Failed to render invoice.");
-  }
-});
-
-app.get("/invoices/completed/today/print", async (req, res) => {
-  try {
-    if (!(await ensureDatabaseReady(res))) return;
-    if (!(await attachRequestUser(req, res))) return;
-    if (!ensureAdminAccess(req, res)) return;
-    const orders = await db.getOrders(true);
-    const completed = orders.filter((order) => order.status === "completed").map(decorateOrder);
-    if (completed.length === 0) {
-      return res.status(404).send("No completed orders found for today.");
-    }
-    const autoPrint = String(req.query.autoprint || "").toLowerCase() === "true";
-    const content = completed.map((order) => renderInvoiceHtml(order, { includePrintButton: false })).join("\n");
-    const html = renderInvoiceDocument(content, {
-      title: "Completed Invoices - Today",
-      autoPrint
-    });
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.send(html);
-  } catch (error) {
-    res.status(500).send("Failed to render completed invoices.");
   }
 });
 
