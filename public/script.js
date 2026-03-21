@@ -23,21 +23,16 @@ const completedBoardView = document.getElementById("completed-board-view");
 const orderSearchInput = document.getElementById("order-search-input");
 const filterPayment = document.getElementById("filter-payment");
 const filterOrderType = document.getElementById("filter-order-type");
+const trackingFoldEl = document.getElementById("tracking-fold");
 
-const statOrders = document.getElementById("stat-orders");
-const statCash = document.getElementById("stat-cash");
-const statUpi = document.getElementById("stat-upi");
-const statGrand = document.getElementById("stat-grand");
 const resetDayBtn = document.getElementById("reset-day-btn");
 const clearCartBtn = document.getElementById("clear-cart-btn");
-const dailyCloseReportBtn = document.getElementById("daily-close-report-btn");
 const invoiceOrderIdInput = document.getElementById("invoice-order-id");
 const printOrderInvoiceBtn = document.getElementById("print-order-invoice-btn");
-const printCompletedInvoicesBtn = document.getElementById("print-completed-invoices-btn");
-const summaryPanelEl = document.querySelector(".summary-panel");
 const userMenuBtn = document.getElementById("user-menu-btn");
 const userMenuDropdown = document.getElementById("user-menu-dropdown");
 const manageMenuLink = document.getElementById("manage-menu-link");
+const dailyCloseReportLink = document.getElementById("daily-close-report-link");
 const manageUsersLink = document.getElementById("manage-users-link");
 const currentUserRoleEl = document.getElementById("current-user-role");
 const logoutBtn = document.getElementById("logout-btn");
@@ -198,9 +193,6 @@ function setUserMenuOpen(isOpen) {
 }
 
 function applyRoleBasedUi() {
-  if (summaryPanelEl) {
-    summaryPanelEl.style.display = isAdminRole() ? "" : "none";
-  }
   if (currentUserRoleEl) {
     currentUserRoleEl.textContent = isAdminRole() ? "Admin" : "User";
   }
@@ -209,6 +201,9 @@ function applyRoleBasedUi() {
   }
   if (manageUsersLink) {
     manageUsersLink.classList.toggle("hidden", !isAdminRole());
+  }
+  if (dailyCloseReportLink) {
+    dailyCloseReportLink.classList.toggle("hidden", !isAdminRole());
   }
 }
 
@@ -362,6 +357,15 @@ function getFoodImageSource(itemName = "", category = "", imagePath = "") {
   if (text.includes("cheese")) return "/icons/cheese.png";
   if (text.includes("dip")) return "/icons/dip.png";
   return getCategoryImage(category);
+}
+
+function applyImagePerfAttributes(img, { width = 0, height = 0, priority = "auto" } = {}) {
+  if (!img) return;
+  img.decoding = "async";
+  img.loading = priority === "high" ? "eager" : "lazy";
+  img.fetchPriority = priority;
+  if (width > 0) img.width = width;
+  if (height > 0) img.height = height;
 }
 
 function isTandoorItemLabel(label = "") {
@@ -755,6 +759,7 @@ function renderCategoryCards() {
       iconImg.src = categoryImage;
       iconImg.alt = "";
       iconImg.className = "category-icon-img";
+      applyImagePerfAttributes(iconImg, { width: 26, height: 26, priority: "high" });
       iconWrap.appendChild(iconImg);
     } else {
       iconWrap.textContent = getCategoryEmoji(category);
@@ -822,6 +827,7 @@ function renderCategoryItems(category) {
         mediaImg.src = variantImageSrc;
         mediaImg.alt = "";
         mediaImg.className = "food-card-media-img";
+        applyImagePerfAttributes(mediaImg, { width: 74, height: 74, priority: "high" });
         variantMedia.appendChild(mediaImg);
       } else {
         variantMedia.textContent = getFoodEmoji(entry.baseName, category);
@@ -899,6 +905,7 @@ function renderCategoryItems(category) {
       mediaImg.src = imageSrc;
       mediaImg.alt = "";
       mediaImg.className = "food-card-media-img";
+      applyImagePerfAttributes(mediaImg, { width: 74, height: 74, priority: "high" });
       media.appendChild(mediaImg);
     } else {
       media.textContent = getFoodEmoji(item.name, category);
@@ -1362,7 +1369,6 @@ async function saveOrderChanges() {
   renderBoards();
   closeEditOrderModal();
   showMessage("Order updated successfully.", "success");
-  fetchStats().catch(() => {});
 }
 
 function renderColumn(targetEl, data) {
@@ -1444,7 +1450,7 @@ async function setBoardTab(tab) {
 }
 
 async function fetchMenu() {
-  const response = await apiFetch("/menu", { cache: "no-store" });
+  const response = await apiFetch("/menu?format=json", { cache: "no-store" });
   const items = await readJsonOrThrow(response, "Failed to fetch menu.");
   applyMenuItems(items);
   writeMenuCache(items);
@@ -1483,16 +1489,6 @@ async function fetchOrders(includeCompleted = false) {
     allOrders = fetchedOrders;
   }
   renderBoards();
-}
-
-async function fetchStats() {
-  if (!isAdminRole()) return;
-  const response = await apiFetch("/stats", { cache: "no-store" });
-  const stats = await readJsonOrThrow(response, "Failed to fetch stats.");
-  statOrders.textContent = String(stats.total_orders || 0);
-  statCash.textContent = formatCurrency(stats.cash_total || 0);
-  statUpi.textContent = formatCurrency(stats.upi_total || 0);
-  statGrand.textContent = formatCurrency(stats.grand_total || 0);
 }
 
 async function createOrder(event) {
@@ -1550,7 +1546,6 @@ async function createOrder(event) {
     showMessage(`Order created successfully. ${getOrderCode(payload)}`, "success");
     clearForm();
     if (orderFoldEl) orderFoldEl.open = true;
-    fetchStats().catch(() => {});
   } finally {
     createOrderInProgress = false;
     if (submitBtn) submitBtn.disabled = false;
@@ -1577,7 +1572,6 @@ async function updateStatus(orderId, status) {
     upsertOrderInState(updated);
     lastOptimisticMutationAt = Date.now();
     renderBoards();
-    fetchStats().catch(() => {});
   } catch (error) {
     if (target && previousStatus) {
       target.status = previousStatus;
@@ -1598,7 +1592,6 @@ async function resetDay() {
   lastOptimisticMutationAt = Date.now();
   renderBoards();
   showMessage(`Day reset complete. Deleted ${payload.deleted_orders} orders.`, "success");
-  fetchStats().catch(() => {});
 }
 
 async function deleteOrder(orderId) {
@@ -1630,7 +1623,6 @@ async function deleteOrder(orderId) {
   lastOptimisticMutationAt = Date.now();
   renderBoards();
   showMessage("Order deleted successfully.", "success");
-  fetchStats().catch(() => {});
 }
 
 async function refreshDashboard() {
@@ -1638,26 +1630,13 @@ async function refreshDashboard() {
   refreshInProgress = true;
   try {
     const includeCompleted = currentBoardTab === "completed";
-    if (isAdminRole()) {
-      await Promise.all([fetchOrders(includeCompleted), fetchStats()]);
-    } else {
-      await fetchOrders(includeCompleted);
-    }
+    await fetchOrders(includeCompleted);
     if (includeCompleted) {
       lastCompletedFetchAt = Date.now();
     }
   } finally {
     refreshInProgress = false;
   }
-}
-
-async function fetchDailyCloseReport() {
-  if (!isAdminRole()) {
-    showMessage("Access denied.", "error");
-    return;
-  }
-  const url = "/reports/daily-close/pdf";
-  openUrlInNewTabOnly(url);
 }
 
 function openUrlInNewTabOnly(url) {
@@ -1688,11 +1667,6 @@ function openInvoicePrint(orderRef) {
   openUrlInNewTabOnly(`/invoices/${encodeURIComponent(String(parsed))}/print`);
 }
 
-function openCompletedInvoicesPrint() {
-  const url = "/invoices/completed/today/print";
-  openUrlInNewTabOnly(url);
-}
-
 function connectRealtimeEvents() {
   if (eventSource) return;
   eventSource = new EventSource("/events");
@@ -1718,6 +1692,11 @@ function connectRealtimeEvents() {
 
 async function init() {
   try {
+    if (trackingFoldEl) {
+      trackingFoldEl.open = true;
+      trackingFoldEl.setAttribute("open", "");
+    }
+
     applyRoleBasedUi();
 
     if (logoutBtn) {
@@ -1765,6 +1744,12 @@ async function init() {
     if (manageUsersLink && isAdminRole()) {
       manageUsersLink.classList.remove("hidden");
     }
+    if (dailyCloseReportLink && !isAdminRole()) {
+      dailyCloseReportLink.classList.add("hidden");
+    }
+    if (dailyCloseReportLink && isAdminRole()) {
+      dailyCloseReportLink.classList.remove("hidden");
+    }
 
     if (userMenuDropdown) {
       userMenuDropdown.addEventListener("click", () => {
@@ -1773,10 +1758,8 @@ async function init() {
     }
 
     if (!isAdminRole()) {
-      if (dailyCloseReportBtn) dailyCloseReportBtn.classList.add("hidden");
       if (resetDayBtn) resetDayBtn.classList.add("hidden");
     } else {
-      if (dailyCloseReportBtn) dailyCloseReportBtn.classList.remove("hidden");
       if (resetDayBtn) resetDayBtn.classList.remove("hidden");
     }
 
@@ -1863,31 +1846,11 @@ async function init() {
       showMessage("Cart cleared.", "success");
     });
 
-    if (dailyCloseReportBtn && isAdminRole()) {
-      dailyCloseReportBtn.addEventListener("click", async () => {
-        try {
-          await fetchDailyCloseReport();
-        } catch (error) {
-          showMessage(error.message, "error");
-        }
-      });
-    }
-
     if (printOrderInvoiceBtn) {
       printOrderInvoiceBtn.addEventListener("click", () => {
         try {
           const orderRef = String(invoiceOrderIdInput?.value || "").trim();
           openInvoicePrint(orderRef);
-        } catch (error) {
-          showMessage(error.message, "error");
-        }
-      });
-    }
-
-    if (printCompletedInvoicesBtn) {
-      printCompletedInvoicesBtn.addEventListener("click", () => {
-        try {
-          openCompletedInvoicesPrint();
         } catch (error) {
           showMessage(error.message, "error");
         }

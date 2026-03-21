@@ -10,23 +10,10 @@
   <link rel="icon" href="/icons/favicon.ico" />
   <link rel="manifest" href="/icons/site.webmanifest" />
   <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/components/layout/layout.css?v=20260321a" />
 </head>
 <body>
-  <header class="app-header">
-    <h1>BLAZING BARBECUE</h1>
-    <div class="header-actions">
-      <button id="user-menu-btn" class="user-menu-btn" type="button" aria-haspopup="true" aria-expanded="false" title="Account Menu">
-        <span class="user-menu-icon" aria-hidden="true">&#128100;</span>
-        <span id="current-user-role" class="user-menu-role">Admin</span>
-      </button>
-      <div id="user-menu-dropdown" class="user-menu-dropdown hidden" role="menu" aria-hidden="true">
-        <a id="manage-menu-link" href="/menu-management" class="user-menu-item" role="menuitem">Manage Menu</a>
-        <a id="manage-users-link" href="/users" class="user-menu-item" role="menuitem">User Management</a>
-        <button id="logout-btn" class="user-menu-item" type="button" role="menuitem">Logout</button>
-      </div>
-    </div>
-  </header>
-
+  <div data-page-root>
   <main class="app-main">
     <details id="order-fold" class="panel fold-panel" open>
       <summary class="fold-summary">Order Placement</summary>
@@ -97,7 +84,7 @@
       </section>
     </details>
 
-    <details id="tracking-fold" class="panel fold-panel">
+    <details id="tracking-fold" class="panel fold-panel" open>
       <summary class="fold-summary">Trace Placed Orders</summary>
       <section class="board-panel fold-content">
         <h2 class="section-title">Live Order Board</h2>
@@ -146,35 +133,13 @@
     </details>
   </main>
 
-  <section class="panel summary-panel">
-    <h2 class="section-title">Daily Summary</h2>
-    <div class="summary-grid">
-      <article class="summary-card">
-        <p>Total Orders</p>
-        <strong id="stat-orders">0</strong>
-      </article>
-      <article class="summary-card">
-        <p>Cash Total</p>
-        <strong id="stat-cash">Rs 0.00</strong>
-      </article>
-      <article class="summary-card">
-        <p>UPI Total</p>
-        <strong id="stat-upi">Rs 0.00</strong>
-      </article>
-      <article class="summary-card">
-        <p>Grand Total</p>
-        <strong id="stat-grand">Rs 0.00</strong>
-      </article>
-    </div>
-    <div class="report-tools">
-      <button id="daily-close-report-btn" class="btn btn-primary" type="button">Generate Daily Close Report</button>
-    </div>
+  <section class="panel admin-tools-panel">
+    <h2 class="section-title">Admin Tools</h2>
     <div class="invoice-tools">
       <label for="invoice-order-id">Print Invoice by Order ID / Token</label>
       <div class="invoice-tools-row">
         <input id="invoice-order-id" type="number" min="1" step="1" placeholder="Enter Order ID or Token" />
         <button id="print-order-invoice-btn" class="btn btn-secondary" type="button">Print Order Invoice</button>
-        <button id="print-completed-invoices-btn" class="btn btn-primary" type="button">Print Completed Today</button>
       </div>
     </div>
     <button id="reset-day-btn" class="btn btn-danger">Reset Current Day</button>
@@ -345,8 +310,17 @@
       <a href="#top" onclick="window.scrollTo({top:0,behavior:'smooth'}); return false;">Back to Top</a>
     </div>
   </footer>
+  </div>
 
-  <script src="/script.js"></script>
+  <script src="/components/layout/Header.js?v=20260321b"></script>
+  <script src="/components/layout/Sidebar.js?v=20260321b"></script>
+  <script src="/components/layout/POSLayout.js?v=20260321b"></script>
+  <script src="/components/layout/AdminLayout.js?v=20260321b"></script>
+  <script src="/components/layout/AppLayoutRouter.js?v=20260321b"></script>
+  <script>
+    window.AppLayoutRouter.mount();
+  </script>
+  <script src="/script.js?v=20260321a"></script>
 </body>
 </html>
 
