@@ -20,6 +20,19 @@ function buildConnectionStringFromParts() {
   return `postgresql://${encodeSegment(user)}:${encodeSegment(password)}@${host}:${port}/${database}`;
 }
 
+function parseManagedEntityId(rawId) {
+  const value = String(rawId || "").trim();
+  const appetizerMatch = value.match(/^a-(\d+)$/i);
+  if (appetizerMatch) {
+    return { kind: "appetizer", id: Number(appetizerMatch[1]) };
+  }
+  const numericId = Number(value);
+  if (Number.isInteger(numericId) && numericId > 0) {
+    return { kind: "menu_item", id: numericId };
+  }
+  return null;
+}
+
 const rawConnectionString =
   process.env.DATABASE_URL || process.env.POSTGRES_URL || buildConnectionStringFromParts();
 let connectionString = rawConnectionString;
@@ -44,6 +57,7 @@ const pool = new Pool({
   ssl: useSSL ? { rejectUnauthorized: false } : false
 });
 let menuColumnsEnsured = false;
+let appetizerGroupColumnsEnsured = false;
 const MAX_QTY_PER_ITEM = 10;
 const MAX_CUSTOMER_NAME_LEN = 75;
 const MAX_CUSTOMER_ADDRESS_LEN = 255;
@@ -86,6 +100,12 @@ async function ensureMenuItemAdminColumns() {
   await run("ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS is_tandoori BOOLEAN NOT NULL DEFAULT FALSE");
   await run("ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS in_stock BOOLEAN NOT NULL DEFAULT TRUE");
   menuColumnsEnsured = true;
+}
+
+async function ensureAppetizerGroupColumns() {
+  if (appetizerGroupColumnsEnsured) return;
+  await run("ALTER TABLE appetizer_groups ADD COLUMN IF NOT EXISTS in_stock BOOLEAN NOT NULL DEFAULT TRUE");
+  appetizerGroupColumnsEnsured = true;
 }
 
 const categoriesSeed = [
@@ -330,9 +350,11 @@ async function initDatabase() {
   await run(`
     CREATE TABLE IF NOT EXISTS appetizer_groups (
       id SERIAL PRIMARY KEY,
-      name TEXT NOT NULL UNIQUE
+      name TEXT NOT NULL UNIQUE,
+      in_stock BOOLEAN NOT NULL DEFAULT TRUE
     )
   `);
+  await run("ALTER TABLE appetizer_groups ADD COLUMN IF NOT EXISTS in_stock BOOLEAN NOT NULL DEFAULT TRUE");
 
   await run(`
     CREATE TABLE IF NOT EXISTS appetizer_variants (
@@ -565,6 +587,7 @@ async function initDatabase() {
 
 async function getMenu() {
   await ensureMenuItemAdminColumns();
+  await ensureAppetizerGroupColumns();
   return all(
     `
     SELECT
@@ -613,7 +636,7 @@ async function getMenu() {
         ) AS is_peri_peri,
         (lower(ag.name) LIKE '%cheese%') AS has_cheese,
         (lower(ag.name) LIKE '%tandoori%' OR lower(ag.name) LIKE '%tandoor%') AS is_tandoori,
-        TRUE AS in_stock,
+        COALESCE(ag.in_stock, TRUE) AS in_stock,
         1 AS category_sort,
         av.id AS item_sort
       FROM appetizer_variants av
@@ -626,25 +649,55 @@ async function getMenu() {
 
 async function getMenuManagementItems() {
   await ensureMenuItemAdminColumns();
+  await ensureAppetizerGroupColumns();
   return all(
     `
-    SELECT
-      mi.id,
-      mi.name,
-      mi.price,
-      mi.prep_time_minutes,
-      COALESCE(mi.description, '') AS description,
-      mi.image_path,
-      COALESCE(mi.is_peri_peri, FALSE) AS is_peri_peri,
-      COALESCE(mi.has_cheese, FALSE) AS has_cheese,
-      COALESCE(mi.is_tandoori, FALSE) AS is_tandoori,
-      COALESCE(mi.in_stock, TRUE) AS in_stock,
-      COALESCE(c.id, extras.id) AS category_id,
-      COALESCE(c.name, 'Extras') AS category
-    FROM menu_items mi
-    LEFT JOIN categories c ON c.id = mi.category_id
-    LEFT JOIN categories extras ON extras.name = 'Extras'
-    ORDER BY COALESCE(c.id, extras.id, 9999) ASC, mi.id ASC
+    SELECT *
+    FROM (
+      SELECT
+        mi.id::TEXT AS id,
+        'menu_item' AS entity_type,
+        mi.name,
+        mi.price,
+        mi.prep_time_minutes,
+        COALESCE(mi.description, '') AS description,
+        mi.image_path,
+        COALESCE(mi.is_peri_peri, FALSE) AS is_peri_peri,
+        COALESCE(mi.has_cheese, FALSE) AS has_cheese,
+        COALESCE(mi.is_tandoori, FALSE) AS is_tandoori,
+        COALESCE(mi.in_stock, TRUE) AS in_stock,
+        COALESCE(c.id, extras.id) AS category_id,
+        COALESCE(c.name, 'Extras') AS category,
+        COALESCE(c.id, extras.id, 9999) AS category_sort,
+        mi.id AS item_sort
+      FROM menu_items mi
+      LEFT JOIN categories c ON c.id = mi.category_id
+      LEFT JOIN categories extras ON extras.name = 'Extras'
+
+      UNION ALL
+
+      SELECT
+        ('a-' || ag.id)::TEXT AS id,
+        'appetizer_group' AS entity_type,
+        ag.name,
+        COALESCE(MIN(av.price), 0) AS price,
+        COALESCE(MIN(av.prep_time_minutes), 0) AS prep_time_minutes,
+        '' AS description,
+        NULL::TEXT AS image_path,
+        CASE WHEN LOWER(ag.name) LIKE '%peri peri%' OR LOWER(ag.name) LIKE '%peri-peri%' THEN TRUE ELSE FALSE END AS is_peri_peri,
+        CASE WHEN LOWER(ag.name) LIKE '%cheese%' THEN TRUE ELSE FALSE END AS has_cheese,
+        CASE WHEN LOWER(ag.name) LIKE '%tandoori%' OR LOWER(ag.name) LIKE '%tandoor%' THEN TRUE ELSE FALSE END AS is_tandoori,
+        COALESCE(ag.in_stock, TRUE) AS in_stock,
+        appetizer_category.id AS category_id,
+        'Appetizers' AS category,
+        COALESCE(appetizer_category.id, 1) AS category_sort,
+        ag.id AS item_sort
+      FROM appetizer_groups ag
+      INNER JOIN appetizer_variants av ON av.group_id = ag.id
+      LEFT JOIN categories appetizer_category ON appetizer_category.name = 'Appetizers'
+      GROUP BY ag.id, ag.name, ag.in_stock, appetizer_category.id
+    ) managed_items
+    ORDER BY category_sort ASC, item_sort ASC
     `
   );
 }
@@ -736,8 +789,45 @@ async function createMenuItem(payload = {}) {
 
 async function updateMenuItem(menuItemId, payload = {}) {
   await ensureMenuItemAdminColumns();
-  const id = Number(menuItemId);
-  if (!Number.isInteger(id) || id <= 0) throw new Error("Invalid menu item id.");
+  await ensureAppetizerGroupColumns();
+  const parsed = parseManagedEntityId(menuItemId);
+  if (!parsed) throw new Error("Invalid menu item id.");
+  const id = parsed.id;
+
+  if (parsed.kind === "appetizer") {
+    const existingGroup = await get(
+      "SELECT id, name, COALESCE(in_stock, TRUE) AS in_stock FROM appetizer_groups WHERE id = $1",
+      [id]
+    );
+    if (!existingGroup) return null;
+    const nextInStock =
+      payload.in_stock !== undefined ? toSqlBool(payload.in_stock, true) : toSqlBool(existingGroup.in_stock, true);
+    await run("UPDATE appetizer_groups SET in_stock = $1 WHERE id = $2", [nextInStock, id]);
+    return get(
+      `
+      SELECT
+        ('a-' || ag.id)::TEXT AS id,
+        'appetizer_group' AS entity_type,
+        ag.name,
+        COALESCE(MIN(av.price), 0) AS price,
+        COALESCE(MIN(av.prep_time_minutes), 0) AS prep_time_minutes,
+        '' AS description,
+        NULL::TEXT AS image_path,
+        CASE WHEN LOWER(ag.name) LIKE '%peri peri%' OR LOWER(ag.name) LIKE '%peri-peri%' THEN TRUE ELSE FALSE END AS is_peri_peri,
+        CASE WHEN LOWER(ag.name) LIKE '%cheese%' THEN TRUE ELSE FALSE END AS has_cheese,
+        CASE WHEN LOWER(ag.name) LIKE '%tandoori%' OR LOWER(ag.name) LIKE '%tandoor%' THEN TRUE ELSE FALSE END AS is_tandoori,
+        COALESCE(ag.in_stock, TRUE) AS in_stock,
+        appetizer_category.id AS category_id,
+        'Appetizers' AS category
+      FROM appetizer_groups ag
+      INNER JOIN appetizer_variants av ON av.group_id = ag.id
+      LEFT JOIN categories appetizer_category ON appetizer_category.name = 'Appetizers'
+      WHERE ag.id = $1
+      GROUP BY ag.id, ag.name, ag.in_stock, appetizer_category.id
+      `,
+      [id]
+    );
+  }
 
   const existing = await get(
     `
@@ -879,8 +969,12 @@ async function updateMenuItem(menuItemId, payload = {}) {
 
 async function deleteMenuItem(menuItemId) {
   await ensureMenuItemAdminColumns();
-  const id = Number(menuItemId);
-  if (!Number.isInteger(id) || id <= 0) throw new Error("Invalid menu item id.");
+  const parsed = parseManagedEntityId(menuItemId);
+  if (!parsed) throw new Error("Invalid menu item id.");
+  if (parsed.kind === "appetizer") {
+    throw new Error("Appetizer groups cannot be deleted from Manage Menu.");
+  }
+  const id = parsed.id;
   const existing = await get("SELECT id FROM menu_items WHERE id = $1", [id]);
   if (!existing) return false;
 
@@ -1031,6 +1125,7 @@ async function createOrder(
   retriesLeft = 2
 ) {
   await ensureMenuItemAdminColumns();
+  await ensureAppetizerGroupColumns();
   if (!Array.isArray(items) || items.length === 0) {
     throw new Error("At least one item is required.");
   }
@@ -1081,7 +1176,8 @@ async function createOrder(
         av.group_id,
         av.price,
         ag.name AS group_name,
-        av.portion_name
+        av.portion_name,
+        COALESCE(ag.in_stock, TRUE) AS in_stock
       FROM appetizer_variants av
       INNER JOIN appetizer_groups ag ON ag.id = av.group_id
       `
@@ -1109,6 +1205,9 @@ async function createOrder(
         const variant = appetizerMap.get(variantId);
         if (!variant || variant.group_id !== groupId) {
           throw new Error("Invalid appetizer variant selection.");
+        }
+        if (!variant.in_stock) {
+          throw new Error(`Menu item is out of stock: ${variant.group_name}`);
         }
 
         const lineTotal = Number(variant.price) * quantity;
@@ -1454,6 +1553,7 @@ async function deleteOrder(orderId) {
 
 async function editOrder(orderId, items) {
   await ensureMenuItemAdminColumns();
+  await ensureAppetizerGroupColumns();
   if (!Array.isArray(items)) {
     throw new Error("Items payload is required.");
   }
@@ -1468,7 +1568,17 @@ async function editOrder(orderId, items) {
     const menuRows = await all("SELECT id, name, price, COALESCE(in_stock, TRUE) AS in_stock FROM menu_items");
     const menuMap = new Map(menuRows.map((row) => [row.id, row]));
 
-    const appetizerRows = await all("SELECT id AS variant_id, price FROM appetizer_variants");
+    const appetizerRows = await all(
+      `
+      SELECT
+        av.id AS variant_id,
+        av.price,
+        ag.name AS group_name,
+        COALESCE(ag.in_stock, TRUE) AS in_stock
+      FROM appetizer_variants av
+      INNER JOIN appetizer_groups ag ON ag.id = av.group_id
+      `
+    );
     const appetizerMap = new Map(appetizerRows.map((row) => [row.variant_id, row]));
 
     const normalizedItems = [];
@@ -1494,6 +1604,9 @@ async function editOrder(orderId, items) {
         const variant = appetizerMap.get(variantId);
         if (!variant) {
           throw new Error(`Appetizer variant not found: ${variantId}`);
+        }
+        if (!variant.in_stock) {
+          throw new Error(`Menu item is out of stock: ${variant.group_name}`);
         }
         const lineTotal = Number(variant.price) * quantity;
         totalAmount += lineTotal;

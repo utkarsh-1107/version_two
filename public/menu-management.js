@@ -7,6 +7,16 @@ const modalEl = document.getElementById("menu-item-modal");
 const modalTitleEl = document.getElementById("modal-title");
 const modalBodyEl = document.getElementById("modal-body");
 const modalCloseBtn = document.getElementById("modal-close-btn");
+const createNameInput = document.getElementById("create-name");
+const createPriceInput = document.getElementById("create-price");
+const createCategorySelect = document.getElementById("create-category");
+const createPrepTimeInput = document.getElementById("create-prep-time");
+const createDescriptionInput = document.getElementById("create-description");
+const createImageInput = document.getElementById("create-image");
+const createPeriInput = document.getElementById("create-peri");
+const createCheeseInput = document.getElementById("create-cheese");
+const createTandooriInput = document.getElementById("create-tandoori");
+const createInStockInput = document.getElementById("create-in-stock");
 
 const CATEGORY_ORDER = [
   "Appetizers",
@@ -35,6 +45,25 @@ function clearMessages() {
 async function apiFetch(url, options = {}) {
   const requestOptions = { credentials: "same-origin", ...(options || {}) };
   return fetch(url, requestOptions);
+}
+
+async function readJsonResponse(response) {
+  const payload = await response.json().catch(() => ({}));
+  if (response.ok) return payload;
+  if (response.status === 401) {
+    window.location.replace("/login");
+    return null;
+  }
+  if (response.status === 403) {
+    window.location.replace("/");
+    return null;
+  }
+  throw new Error(payload.error || "Request failed.");
+}
+
+async function requestJson(url, options = {}) {
+  const response = await apiFetch(url, options);
+  return readJsonResponse(response);
 }
 
 function boolFlag(value, fallback = false) {
@@ -91,12 +120,43 @@ function getFallbackImage(item = {}) {
   return "/icons/dip.png";
 }
 
+function inferFlagsFromItemName(name = "") {
+  const text = String(name || "").trim().toLowerCase();
+  return {
+    isPeriPeri:
+      text.includes("peri peri") ||
+      text.includes("peri-peri") ||
+      text.includes("piri piri") ||
+      text.includes("piri-peri"),
+    hasCheese: text.includes("cheese"),
+    isTandoori: text.includes("tandoori") || text.includes("tandoor")
+  };
+}
+
+function getResolvedVisualFlags(item = {}) {
+  const inferred = inferFlagsFromItemName(item.name || "");
+  return {
+    isPeriPeri: boolFlag(item.is_peri_peri, inferred.isPeriPeri),
+    hasCheese: boolFlag(item.has_cheese, inferred.hasCheese),
+    isTandoori: boolFlag(item.is_tandoori, inferred.isTandoori)
+  };
+}
+
+function getCardAccentType(item = {}) {
+  const { isPeriPeri: isPeri, hasCheese } = getResolvedVisualFlags(item);
+  if (isPeri && hasCheese) return "peri-cheese";
+  if (isPeri) return "peri";
+  if (hasCheese) return "cheese";
+  return "";
+}
+
 function getItemById(itemId) {
-  const id = Number(itemId);
-  return menuItems.find((entry) => Number(entry.id) === id) || null;
+  const id = String(itemId || "").trim();
+  return menuItems.find((entry) => String(entry.id) === id) || null;
 }
 
 function closeAllCardMenus() {
+  if (!categorySectionsEl) return;
   categorySectionsEl.querySelectorAll(".card-menu").forEach((menu) => {
     menu.classList.add("hidden");
   });
@@ -114,16 +174,31 @@ function cardTemplate(item) {
   card.dataset.id = String(item.id);
   const inStock = boolFlag(item.in_stock, true);
   const imageSrc = String(item.image_path || "").trim() || getFallbackImage(item);
+  const isAppetizerGroup = String(item.entity_type || "") === "appetizer_group";
+  const visualFlags = getResolvedVisualFlags(item);
+  const accentType = getCardAccentType(item);
+  if (visualFlags.isTandoori) {
+    card.classList.add("menu-item-card-tandoori");
+  }
+  if (accentType) {
+    card.classList.add("menu-item-card-corner-accent", `menu-item-card-corner-${accentType}`);
+  }
+  const cornerAccentMarkup = accentType
+    ? `<span class="card-corner-accent card-corner-accent-${accentType}" aria-hidden="true"></span>`
+    : "";
 
   card.innerHTML = `
-    <button class="card-menu-btn" type="button" aria-label="Open actions">⋮</button>
-    <div class="card-menu hidden">
-      <button class="card-menu-item" data-action="view-details" type="button">View Details</button>
-      <button class="card-menu-item" data-action="edit-item" type="button">Edit Item</button>
-      <button class="card-menu-item" data-action="update-image" type="button">Update Image</button>
-      <button class="card-menu-item" data-action="duplicate-item" type="button">Duplicate Item</button>
-      <button class="card-menu-item" data-action="delete-item" type="button">Delete Item</button>
-    </div>
+    ${cornerAccentMarkup}
+    ${isAppetizerGroup ? "" : `
+      <button class="card-menu-btn" type="button" aria-label="Open actions">&#8942;</button>
+      <div class="card-menu hidden">
+        <button class="card-menu-item" data-action="view-details" type="button">View Details</button>
+        <button class="card-menu-item" data-action="edit-item" type="button">Edit Item</button>
+        <button class="card-menu-item" data-action="update-image" type="button">Update Image</button>
+        <button class="card-menu-item" data-action="duplicate-item" type="button">Duplicate Item</button>
+        <button class="card-menu-item" data-action="delete-item" type="button">Delete Item</button>
+      </div>
+    `}
 
     <div class="card-top">
       <img class="item-image" src="${imageSrc}" alt="${String(item.name || "").replaceAll('"', "&quot;")}" />
@@ -134,9 +209,9 @@ function cardTemplate(item) {
     </div>
 
     <div class="item-badges">
-      ${boolFlag(item.is_peri_peri) ? '<span class="badge">Peri Peri</span>' : ""}
-      ${boolFlag(item.has_cheese) ? '<span class="badge">Cheese</span>' : ""}
-      ${boolFlag(item.is_tandoori) ? '<span class="badge">Tandoori</span>' : ""}
+      ${visualFlags.isPeriPeri ? '<span class="badge badge-peri">Peri Peri</span>' : ""}
+      ${visualFlags.hasCheese ? '<span class="badge badge-cheese">Cheese</span>' : ""}
+      ${visualFlags.isTandoori ? '<span class="badge badge-tandoori">Tandoori</span>' : ""}
     </div>
 
     <div class="stock-row">
@@ -191,6 +266,41 @@ async function readFileAsDataUrl(file) {
   });
 }
 
+async function optimizeImageDataUrl(file, maxSize = 720, quality = 0.82) {
+  if (!file) return "";
+  if (String(file.type || "").toLowerCase() === "image/gif") {
+    return readFileAsDataUrl(file);
+  }
+
+  const sourceDataUrl = await readFileAsDataUrl(file);
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const longestSide = Math.max(img.naturalWidth || img.width || 0, img.naturalHeight || img.height || 0) || 1;
+      const scale = Math.min(1, maxSize / longestSide);
+      const targetWidth = Math.max(1, Math.round((img.naturalWidth || img.width || 1) * scale));
+      const targetHeight = Math.max(1, Math.round((img.naturalHeight || img.height || 1) * scale));
+
+      const canvas = document.createElement("canvas");
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        resolve(sourceDataUrl);
+        return;
+      }
+      ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+      try {
+        resolve(canvas.toDataURL("image/webp", quality));
+      } catch (_error) {
+        resolve(sourceDataUrl);
+      }
+    };
+    img.onerror = () => reject(new Error("Failed to process image file."));
+    img.src = sourceDataUrl;
+  });
+}
+
 function openModal(title, bodyHtml) {
   if (!modalEl || !modalTitleEl || !modalBodyEl) return;
   modalTitleEl.textContent = title;
@@ -207,15 +317,8 @@ function closeModal() {
 }
 
 async function fetchCurrentUser() {
-  const response = await apiFetch("/auth/me", { cache: "no-store" });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    if (response.status === 401) {
-      window.location.replace("/login");
-      return null;
-    }
-    throw new Error(payload.error || "Failed to resolve user.");
-  }
+  const payload = await requestJson("/auth/me", { cache: "no-store" });
+  if (!payload) return null;
   if (String(payload.role || "").toLowerCase() !== "admin") {
     window.location.replace("/");
     return null;
@@ -224,19 +327,8 @@ async function fetchCurrentUser() {
 }
 
 async function fetchItems() {
-  const response = await apiFetch("/menu/manage", { cache: "no-store" });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    if (response.status === 401) {
-      window.location.replace("/login");
-      return [];
-    }
-    if (response.status === 403) {
-      window.location.replace("/");
-      return [];
-    }
-    throw new Error(payload.error || "Failed to fetch menu items.");
-  }
+  const payload = await requestJson("/menu/manage", { cache: "no-store" });
+  if (!payload) return;
   menuItems = Array.isArray(payload) ? payload : [];
   renderItems();
 }
@@ -305,15 +397,12 @@ function openEditModal(item, imageOnly = false) {
 }
 
 async function updateAvailability(itemId, inStock) {
-  const response = await apiFetch(`/menu/${itemId}`, {
+  const payload = await requestJson(`/menu/${itemId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ in_stock: Boolean(inStock) })
   });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload.error || "Failed to update item availability.");
-  }
+  if (!payload) return;
   const target = getItemById(itemId);
   if (target) target.in_stock = Boolean(inStock);
   renderItems();
@@ -322,12 +411,12 @@ async function updateAvailability(itemId, inStock) {
 async function createItem(event) {
   event.preventDefault();
   clearMessages();
-  const name = String(document.getElementById("create-name")?.value || "").trim();
-  const price = Number(document.getElementById("create-price")?.value || 0);
-  const category = normalizeCategoryName(document.getElementById("create-category")?.value || "Extras");
-  const prepTime = Number(document.getElementById("create-prep-time")?.value || 0);
-  const description = String(document.getElementById("create-description")?.value || "").trim();
-  const imageFile = document.getElementById("create-image")?.files?.[0] || null;
+  const name = String(createNameInput?.value || "").trim();
+  const price = Number(createPriceInput?.value || 0);
+  const category = normalizeCategoryName(createCategorySelect?.value || "Extras");
+  const prepTime = Number(createPrepTimeInput?.value || 0);
+  const description = String(createDescriptionInput?.value || "").trim();
+  const imageFile = createImageInput?.files?.[0] || null;
 
   const payload = {
     name,
@@ -335,31 +424,27 @@ async function createItem(event) {
     category,
     prep_time_minutes: prepTime,
     description,
-    is_peri_peri: Boolean(document.getElementById("create-peri")?.checked),
-    has_cheese: Boolean(document.getElementById("create-cheese")?.checked),
-    is_tandoori: Boolean(document.getElementById("create-tandoori")?.checked),
-    in_stock: Boolean(document.getElementById("create-in-stock")?.checked)
+    is_peri_peri: Boolean(createPeriInput?.checked),
+    has_cheese: Boolean(createCheeseInput?.checked),
+    is_tandoori: Boolean(createTandooriInput?.checked),
+    in_stock: Boolean(createInStockInput?.checked)
   };
 
   if (imageFile) {
-    payload.image_data_url = await readFileAsDataUrl(imageFile);
+    payload.image_data_url = await optimizeImageDataUrl(imageFile);
     payload.image_filename = imageFile.name || "";
   }
 
-  const response = await apiFetch("/menu", {
+  const result = await requestJson("/menu", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    setMessage(createMessage, result.error || "Failed to create menu item.");
-    return;
-  }
+  if (!result) return;
 
   createForm.reset();
-  document.getElementById("create-prep-time").value = "10";
-  document.getElementById("create-in-stock").checked = true;
+  if (createPrepTimeInput) createPrepTimeInput.value = "10";
+  if (createInStockInput) createInStockInput.checked = true;
   setMessage(createMessage, "Menu item created.");
   await fetchItems();
 }
@@ -377,26 +462,20 @@ async function duplicateItem(item) {
     is_tandoori: boolFlag(item.is_tandoori),
     in_stock: boolFlag(item.in_stock, true)
   };
-  const response = await apiFetch("/menu", {
+  const result = await requestJson("/menu", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(result.error || "Failed to duplicate item.");
-  }
+  if (!result) return;
   setMessage(itemsMessage, "Item duplicated.");
   await fetchItems();
 }
 
 async function deleteItem(item) {
   if (!window.confirm(`Delete "${item.name}"?`)) return;
-  const response = await apiFetch(`/menu/${item.id}`, { method: "DELETE" });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(result.error || "Failed to delete item.");
-  }
+  const result = await requestJson(`/menu/${item.id}`, { method: "DELETE" });
+  if (!result) return;
   setMessage(itemsMessage, "Item deleted.");
   await fetchItems();
 }
@@ -438,68 +517,63 @@ async function handleModalSubmit(event) {
     closeModal();
     return;
   }
-
-  if (imageForm) {
-    const payload = {};
-    const imageFile = document.getElementById("modal-image-file")?.files?.[0] || null;
-    const clearImage = Boolean(document.getElementById("modal-clear-image")?.checked);
-    if (imageFile) {
-      payload.image_data_url = await readFileAsDataUrl(imageFile);
-      payload.image_filename = imageFile.name || "";
-    }
-    if (clearImage) payload.clear_image = true;
-    if (!payload.image_data_url && !payload.clear_image) {
-      setMessage(itemsMessage, "Please select an image or choose remove image.");
+  try {
+    if (imageForm) {
+      const payload = {};
+      const imageFile = document.getElementById("modal-image-file")?.files?.[0] || null;
+      const clearImage = Boolean(document.getElementById("modal-clear-image")?.checked);
+      if (imageFile) {
+        payload.image_data_url = await optimizeImageDataUrl(imageFile);
+        payload.image_filename = imageFile.name || "";
+      }
+      if (clearImage) payload.clear_image = true;
+      if (!payload.image_data_url && !payload.clear_image) {
+        setMessage(itemsMessage, "Please select an image or choose remove image.");
+        return;
+      }
+      const result = await requestJson(`/menu/${item.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!result) return;
+      closeModal();
+      setMessage(itemsMessage, "Item image updated.");
+      await fetchItems();
       return;
     }
-    const response = await apiFetch(`/menu/${item.id}`, {
+
+    const payload = {
+      name: String(document.getElementById("modal-name")?.value || "").trim(),
+      price: Number(document.getElementById("modal-price")?.value || 0),
+      category: normalizeCategoryName(document.getElementById("modal-category")?.value || "Extras"),
+      prep_time_minutes: Number(document.getElementById("modal-prep-time")?.value || 0),
+      description: String(document.getElementById("modal-description")?.value || "").trim(),
+      is_peri_peri: Boolean(document.getElementById("modal-peri")?.checked),
+      has_cheese: Boolean(document.getElementById("modal-cheese")?.checked),
+      is_tandoori: Boolean(document.getElementById("modal-tandoori")?.checked),
+      in_stock: Boolean(document.getElementById("modal-in-stock")?.checked),
+      clear_image: Boolean(document.getElementById("modal-clear-image")?.checked)
+    };
+
+    const imageFile = document.getElementById("modal-image-file")?.files?.[0] || null;
+    if (imageFile) {
+      payload.image_data_url = await optimizeImageDataUrl(imageFile);
+      payload.image_filename = imageFile.name || "";
+    }
+
+    const result = await requestJson(`/menu/${item.id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      setMessage(itemsMessage, result.error || "Failed to update item image.");
-      return;
-    }
+    if (!result) return;
     closeModal();
-    setMessage(itemsMessage, "Item image updated.");
+    setMessage(itemsMessage, "Item updated.");
     await fetchItems();
-    return;
+  } catch (error) {
+    setMessage(itemsMessage, error.message || "Failed to update item.");
   }
-
-  const payload = {
-    name: String(document.getElementById("modal-name")?.value || "").trim(),
-    price: Number(document.getElementById("modal-price")?.value || 0),
-    category: normalizeCategoryName(document.getElementById("modal-category")?.value || "Extras"),
-    prep_time_minutes: Number(document.getElementById("modal-prep-time")?.value || 0),
-    description: String(document.getElementById("modal-description")?.value || "").trim(),
-    is_peri_peri: Boolean(document.getElementById("modal-peri")?.checked),
-    has_cheese: Boolean(document.getElementById("modal-cheese")?.checked),
-    is_tandoori: Boolean(document.getElementById("modal-tandoori")?.checked),
-    in_stock: Boolean(document.getElementById("modal-in-stock")?.checked),
-    clear_image: Boolean(document.getElementById("modal-clear-image")?.checked)
-  };
-
-  const imageFile = document.getElementById("modal-image-file")?.files?.[0] || null;
-  if (imageFile) {
-    payload.image_data_url = await readFileAsDataUrl(imageFile);
-    payload.image_filename = imageFile.name || "";
-  }
-
-  const response = await apiFetch(`/menu/${item.id}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    setMessage(itemsMessage, result.error || "Failed to update item.");
-    return;
-  }
-  closeModal();
-  setMessage(itemsMessage, "Item updated.");
-  await fetchItems();
 }
 
 async function handleGridClick(event) {
@@ -534,7 +608,7 @@ async function handleGridClick(event) {
 async function handleGridChange(event) {
   const toggle = event.target.closest(".availability-toggle");
   if (!toggle) return;
-  const itemId = Number(toggle.dataset.itemId || 0);
+  const itemId = String(toggle.dataset.itemId || "").trim();
   try {
     await updateAvailability(itemId, toggle.checked);
     setMessage(itemsMessage, `Item marked as ${toggle.checked ? "Available" : "Out of Stock"}.`);

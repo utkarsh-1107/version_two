@@ -169,6 +169,19 @@ function inferFlagsFromName(name = "") {
   return { isPeriPeri, hasCheese, isTandoori };
 }
 
+function parseManagedEntityId(rawId) {
+  const value = String(rawId || "").trim();
+  const appetizerMatch = value.match(/^a-(\d+)$/i);
+  if (appetizerMatch) {
+    return { kind: "appetizer", id: Number(appetizerMatch[1]) };
+  }
+  const numericId = Number(value);
+  if (Number.isInteger(numericId) && numericId > 0) {
+    return { kind: "menu_item", id: numericId };
+  }
+  return null;
+}
+
 function toINDateTime(date = new Date()) {
   const options = {
     timeZone: "Asia/Kolkata",
@@ -328,6 +341,17 @@ async function migrateMenuItemsTable() {
   }
 }
 
+async function migrateAppetizerGroupsTable() {
+  const exists = await get(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'appetizer_groups'"
+  );
+  if (!exists) return;
+
+  if (!(await hasColumn("appetizer_groups", "in_stock"))) {
+    await run("ALTER TABLE appetizer_groups ADD COLUMN in_stock INTEGER NOT NULL DEFAULT 1");
+  }
+}
+
 async function initDatabase() {
   if (READ_ONLY) return;
   await run(`
@@ -377,7 +401,8 @@ async function initDatabase() {
   await run(`
     CREATE TABLE IF NOT EXISTS appetizer_groups (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL UNIQUE
+      name TEXT NOT NULL UNIQUE,
+      in_stock INTEGER NOT NULL DEFAULT 1 CHECK(in_stock IN (0, 1))
     )
   `);
 
@@ -431,6 +456,7 @@ async function initDatabase() {
 
   await migrateOrderItemsTable();
   await migrateMenuItemsTable();
+  await migrateAppetizerGroupsTable();
 
   await run("CREATE INDEX IF NOT EXISTS idx_menu_items_category_id ON menu_items(category_id)");
   await run("CREATE UNIQUE INDEX IF NOT EXISTS idx_menu_items_unique_name_per_category ON menu_items(category_id, name)");
@@ -659,7 +685,7 @@ async function getMenu() {
         END AS is_peri_peri,
         CASE WHEN lower(ag.name) LIKE '%cheese%' THEN 1 ELSE 0 END AS has_cheese,
         CASE WHEN lower(ag.name) LIKE '%tandoori%' OR lower(ag.name) LIKE '%tandoor%' THEN 1 ELSE 0 END AS is_tandoori,
-        1 AS in_stock,
+        COALESCE(ag.in_stock, 1) AS in_stock,
         1 AS category_sort,
         av.id AS item_sort
       FROM appetizer_variants av
@@ -673,23 +699,52 @@ async function getMenu() {
 async function getMenuManagementItems() {
   return all(
     `
-    SELECT
-      mi.id,
-      mi.name,
-      mi.price,
-      mi.prep_time_minutes,
-      COALESCE(mi.description, '') AS description,
-      mi.image_path,
-      COALESCE(mi.is_peri_peri, 0) AS is_peri_peri,
-      COALESCE(mi.has_cheese, 0) AS has_cheese,
-      COALESCE(mi.is_tandoori, 0) AS is_tandoori,
-      COALESCE(mi.in_stock, 1) AS in_stock,
-      COALESCE(c.id, extras.id) AS category_id,
-      COALESCE(c.name, 'Extras') AS category
-    FROM menu_items mi
-    LEFT JOIN categories c ON c.id = mi.category_id
-    LEFT JOIN categories extras ON extras.name = 'Extras'
-    ORDER BY COALESCE(c.id, extras.id, 9999) ASC, mi.id ASC
+    SELECT *
+    FROM (
+      SELECT
+        CAST(mi.id AS TEXT) AS id,
+        'menu_item' AS entity_type,
+        mi.name,
+        mi.price,
+        mi.prep_time_minutes,
+        COALESCE(mi.description, '') AS description,
+        mi.image_path,
+        COALESCE(mi.is_peri_peri, 0) AS is_peri_peri,
+        COALESCE(mi.has_cheese, 0) AS has_cheese,
+        COALESCE(mi.is_tandoori, 0) AS is_tandoori,
+        COALESCE(mi.in_stock, 1) AS in_stock,
+        COALESCE(c.id, extras.id) AS category_id,
+        COALESCE(c.name, 'Extras') AS category,
+        COALESCE(c.id, extras.id, 9999) AS category_sort,
+        mi.id AS item_sort
+      FROM menu_items mi
+      LEFT JOIN categories c ON c.id = mi.category_id
+      LEFT JOIN categories extras ON extras.name = 'Extras'
+
+      UNION ALL
+
+      SELECT
+        'a-' || ag.id AS id,
+        'appetizer_group' AS entity_type,
+        ag.name,
+        COALESCE(MIN(av.price), 0) AS price,
+        COALESCE(MIN(av.prep_time_minutes), 0) AS prep_time_minutes,
+        '' AS description,
+        NULL AS image_path,
+        CASE WHEN LOWER(ag.name) LIKE '%peri peri%' OR LOWER(ag.name) LIKE '%peri-peri%' THEN 1 ELSE 0 END AS is_peri_peri,
+        CASE WHEN LOWER(ag.name) LIKE '%cheese%' THEN 1 ELSE 0 END AS has_cheese,
+        CASE WHEN LOWER(ag.name) LIKE '%tandoori%' OR LOWER(ag.name) LIKE '%tandoor%' THEN 1 ELSE 0 END AS is_tandoori,
+        COALESCE(ag.in_stock, 1) AS in_stock,
+        appetizer_category.id AS category_id,
+        'Appetizers' AS category,
+        COALESCE(appetizer_category.id, 1) AS category_sort,
+        ag.id AS item_sort
+      FROM appetizer_groups ag
+      INNER JOIN appetizer_variants av ON av.group_id = ag.id
+      LEFT JOIN categories appetizer_category ON appetizer_category.name = 'Appetizers'
+      GROUP BY ag.id, ag.name, ag.in_stock, appetizer_category.id
+    ) managed_items
+    ORDER BY category_sort ASC, item_sort ASC
     `
   );
 }
@@ -778,8 +833,41 @@ async function createMenuItem(payload = {}) {
 }
 
 async function updateMenuItem(menuItemId, payload = {}) {
-  const id = Number(menuItemId);
-  if (!Number.isInteger(id) || id <= 0) throw new Error("Invalid menu item id.");
+  const parsed = parseManagedEntityId(menuItemId);
+  if (!parsed) throw new Error("Invalid menu item id.");
+  const id = parsed.id;
+
+  if (parsed.kind === "appetizer") {
+    const existingGroup = await get("SELECT id, name, COALESCE(in_stock, 1) AS in_stock FROM appetizer_groups WHERE id = ?", [id]);
+    if (!existingGroup) return null;
+    const nextInStock =
+      payload.in_stock !== undefined ? toSqliteBool(payload.in_stock, 1) : toSqliteBool(existingGroup.in_stock, 1);
+    await run("UPDATE appetizer_groups SET in_stock = ? WHERE id = ?", [nextInStock, id]);
+    return get(
+      `
+      SELECT
+        'a-' || ag.id AS id,
+        'appetizer_group' AS entity_type,
+        ag.name,
+        COALESCE(MIN(av.price), 0) AS price,
+        COALESCE(MIN(av.prep_time_minutes), 0) AS prep_time_minutes,
+        '' AS description,
+        NULL AS image_path,
+        CASE WHEN LOWER(ag.name) LIKE '%peri peri%' OR LOWER(ag.name) LIKE '%peri-peri%' THEN 1 ELSE 0 END AS is_peri_peri,
+        CASE WHEN LOWER(ag.name) LIKE '%cheese%' THEN 1 ELSE 0 END AS has_cheese,
+        CASE WHEN LOWER(ag.name) LIKE '%tandoori%' OR LOWER(ag.name) LIKE '%tandoor%' THEN 1 ELSE 0 END AS is_tandoori,
+        COALESCE(ag.in_stock, 1) AS in_stock,
+        appetizer_category.id AS category_id,
+        'Appetizers' AS category
+      FROM appetizer_groups ag
+      INNER JOIN appetizer_variants av ON av.group_id = ag.id
+      LEFT JOIN categories appetizer_category ON appetizer_category.name = 'Appetizers'
+      WHERE ag.id = ?
+      GROUP BY ag.id, ag.name, ag.in_stock, appetizer_category.id
+      `,
+      [id]
+    );
+  }
 
   const existing = await get(
     `
@@ -919,8 +1007,12 @@ async function updateMenuItem(menuItemId, payload = {}) {
 }
 
 async function deleteMenuItem(menuItemId) {
-  const id = Number(menuItemId);
-  if (!Number.isInteger(id) || id <= 0) throw new Error("Invalid menu item id.");
+  const parsed = parseManagedEntityId(menuItemId);
+  if (!parsed) throw new Error("Invalid menu item id.");
+  if (parsed.kind === "appetizer") {
+    throw new Error("Appetizer groups cannot be deleted from Manage Menu.");
+  }
+  const id = parsed.id;
   const existing = await get("SELECT id FROM menu_items WHERE id = ?", [id]);
   if (!existing) return false;
 
@@ -1110,7 +1202,8 @@ async function createOrder({
         av.group_id,
         av.price,
         ag.name AS group_name,
-        av.portion_name
+        av.portion_name,
+        COALESCE(ag.in_stock, 1) AS in_stock
       FROM appetizer_variants av
       INNER JOIN appetizer_groups ag ON ag.id = av.group_id
       `
@@ -1138,6 +1231,9 @@ async function createOrder({
         const variant = appetizerMap.get(variantId);
         if (!variant || variant.group_id !== groupId) {
           throw new Error("Invalid appetizer variant selection.");
+        }
+        if (Number(variant.in_stock) !== 1) {
+          throw new Error(`Menu item is out of stock: ${variant.group_name}`);
         }
 
         const lineTotal = Number(variant.price) * quantity;
@@ -1515,8 +1611,11 @@ async function editOrder(orderId, items) {
       `
       SELECT
         av.id AS variant_id,
-        av.price
+        av.price,
+        ag.name AS group_name,
+        COALESCE(ag.in_stock, 1) AS in_stock
       FROM appetizer_variants av
+      INNER JOIN appetizer_groups ag ON ag.id = av.group_id
       `
     );
     const appetizerMap = new Map(appetizerRows.map((row) => [row.variant_id, row]));
@@ -1544,6 +1643,9 @@ async function editOrder(orderId, items) {
         const variant = appetizerMap.get(variantId);
         if (!variant) {
           throw new Error(`Appetizer variant not found: ${variantId}`);
+        }
+        if (Number(variant.in_stock) !== 1) {
+          throw new Error(`Menu item is out of stock: ${variant.group_name}`);
         }
         const lineTotal = Number(variant.price) * quantity;
         totalAmount += lineTotal;

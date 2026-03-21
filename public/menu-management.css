@@ -166,6 +166,36 @@ body {
   background: #ffffff;
   padding: 8px;
   box-shadow: 0 3px 10px rgba(20, 20, 20, 0.04);
+  overflow: hidden;
+}
+
+.menu-item-card-tandoori {
+  border-color: #ff9933;
+  background: linear-gradient(180deg, #fff8ec, #ffefcf);
+  box-shadow: 0 3px 12px rgba(255, 153, 51, 0.14);
+}
+
+.card-corner-accent {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 30px;
+  height: 30px;
+  clip-path: polygon(100% 0, 0 0, 100% 100%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.card-corner-accent-cheese {
+  background: #fbbf24;
+}
+
+.card-corner-accent-peri {
+  background: #dc2626;
+}
+
+.card-corner-accent-peri-cheese {
+  background: linear-gradient(135deg, #dc2626 0 50%, #fbbf24 50% 100%);
 }
 
 .card-menu-btn {
@@ -226,7 +256,9 @@ body {
   grid-template-columns: 56px 1fr;
   gap: 8px;
   margin-bottom: 6px;
-  padding-right: 32px;
+  padding-right: 36px;
+  position: relative;
+  z-index: 2;
 }
 
 .item-image {
@@ -258,6 +290,8 @@ body {
   flex-wrap: wrap;
   gap: 4px;
   margin-top: 6px;
+  position: relative;
+  z-index: 2;
 }
 
 .badge {
@@ -272,11 +306,31 @@ body {
   background: #fff7f7;
 }
 
+.badge-peri {
+  border-color: #f1b7b7;
+  background: #fff1f1;
+  color: #b91c1c;
+}
+
+.badge-cheese {
+  border-color: #f2d38a;
+  background: #fff6dc;
+  color: #a16207;
+}
+
+.badge-tandoori {
+  border-color: #ffb562;
+  background: #fff2d9;
+  color: #9a5f05;
+}
+
 .stock-row {
   margin-top: 7px;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  position: relative;
+  z-index: 2;
 }
 
 .stock-label {

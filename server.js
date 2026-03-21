@@ -62,6 +62,22 @@ const BUSINESS_INFO = {
 };
 
 app.use(express.json({ limit: "8mb" }));
+app.use(
+  "/icons",
+  express.static(path.join(__dirname, "public", "icons"), {
+    index: false,
+    maxAge: "30d",
+    immutable: true
+  })
+);
+app.use(
+  "/uploads/menu",
+  express.static(path.join(__dirname, "public", "uploads", "menu"), {
+    index: false,
+    maxAge: "30d",
+    immutable: true
+  })
+);
 app.use(express.static(path.join(__dirname, "public"), { index: false }));
 
 let initError = null;
@@ -464,6 +480,7 @@ app.get("/menu-management", async (req, res) => {
   if (!(await ensureDatabaseReady(res))) return;
   if (!(await attachRequestUser(req, res))) return;
   if (!ensureAdminAccess(req, res)) return;
+  res.setHeader("Cache-Control", "no-store");
   return res.sendFile(path.join(__dirname, "public", "menu-management.html"));
 });
 
@@ -1067,13 +1084,13 @@ app.put("/menu/:id", async (req, res) => {
       return res.status(405).json({ error: "Read-only mode is enabled." });
     }
 
-    const menuItemId = Number(req.params.id);
-    if (!Number.isInteger(menuItemId) || menuItemId <= 0) {
+    const menuItemId = String(req.params.id || "").trim();
+    if (!menuItemId) {
       return res.status(400).json({ error: "Invalid menu item id." });
     }
 
     const existingItems = await db.getMenuManagementItems();
-    const existing = existingItems.find((item) => Number(item.id) === menuItemId);
+    const existing = existingItems.find((item) => String(item.id) === menuItemId);
     if (!existing) {
       return res.status(404).json({ error: "Menu item not found." });
     }
@@ -1126,13 +1143,13 @@ app.delete("/menu/:id", async (req, res) => {
       return res.status(405).json({ error: "Read-only mode is enabled." });
     }
 
-    const menuItemId = Number(req.params.id);
-    if (!Number.isInteger(menuItemId) || menuItemId <= 0) {
+    const menuItemId = String(req.params.id || "").trim();
+    if (!menuItemId) {
       return res.status(400).json({ error: "Invalid menu item id." });
     }
 
     const existingItems = await db.getMenuManagementItems();
-    const existing = existingItems.find((item) => Number(item.id) === menuItemId);
+    const existing = existingItems.find((item) => String(item.id) === menuItemId);
     if (!existing) {
       return res.status(404).json({ error: "Menu item not found." });
     }
