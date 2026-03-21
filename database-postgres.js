@@ -757,6 +757,20 @@ async function getMenuManagementItems() {
       LEFT JOIN categories c ON c.id = mi.category_id
       LEFT JOIN categories extras ON extras.name = 'Extras'
       WHERE COALESCE(mi.legacy_variant_migrated, FALSE) = FALSE
+        AND NOT (
+          COALESCE(c.name, '') = 'Appetizers'
+          AND EXISTS (
+            SELECT 1
+            FROM appetizer_groups ag
+            WHERE LOWER(ag.name) = LOWER(
+              CASE
+                WHEN POSITION(' - ' IN mi.name) > 0 THEN TRIM(SPLIT_PART(mi.name, ' - ', 1))
+                WHEN LOWER(mi.name) LIKE 'grilled chicken sausage (%' THEN 'Grilled Chicken Sausages'
+                ELSE mi.name
+              END
+            )
+          )
+        )
 
       UNION ALL
 
