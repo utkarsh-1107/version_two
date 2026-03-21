@@ -9,17 +9,11 @@
   <link rel="icon" type="image/svg+xml" href="/icons/favicon.svg" />
   <link rel="icon" href="/icons/favicon.ico" />
   <link rel="manifest" href="/icons/site.webmanifest" />
-  <link rel="stylesheet" href="/users.css" />
+  <link rel="stylesheet" href="/users.css?v=20260321a" />
+  <link rel="stylesheet" href="/components/layout/layout.css?v=20260321a" />
 </head>
 <body>
-  <header class="users-header">
-    <h1>User Management</h1>
-    <div class="header-actions">
-      <a class="btn secondary" href="/">Back to POS</a>
-      <button id="logout-btn" class="btn">Logout</button>
-    </div>
-  </header>
-
+  <div data-page-root>
   <main class="users-main">
     <section class="panel">
       <h2>Create User</h2>
@@ -56,7 +50,16 @@
       <p id="users-message" class="message"></p>
     </section>
   </main>
+  </div>
 
-  <script src="/users.js"></script>
+  <script src="/components/layout/Header.js?v=20260321b"></script>
+  <script src="/components/layout/Sidebar.js?v=20260321b"></script>
+  <script src="/components/layout/POSLayout.js?v=20260321b"></script>
+  <script src="/components/layout/AdminLayout.js?v=20260321b"></script>
+  <script src="/components/layout/AppLayoutRouter.js?v=20260321b"></script>
+  <script>
+    window.AppLayoutRouter.mount();
+  </script>
+  <script src="/users.js?v=20260321a"></script>
 </body>
 </html>
