@@ -9,17 +9,11 @@
   <link rel="icon" type="image/svg+xml" href="/icons/favicon.svg" />
   <link rel="icon" href="/icons/favicon.ico" />
   <link rel="manifest" href="/icons/site.webmanifest" />
-  <link rel="stylesheet" href="/menu-management.css?v=20260321b" />
+  <link rel="stylesheet" href="/menu-management.css?v=20260321i" />
+  <link rel="stylesheet" href="/components/layout/layout.css?v=20260321a" />
 </head>
 <body>
-  <header class="menu-header">
-    <h1>Menu Management</h1>
-    <div class="header-actions">
-      <a class="btn secondary" href="/">Back to POS</a>
-      <button id="logout-btn" class="btn" type="button">Logout</button>
-    </div>
-  </header>
-
+  <div data-page-root>
   <main class="menu-main">
     <section class="panel">
       <h2>Create Menu Item</h2>
@@ -53,8 +47,24 @@
     </section>
 
     <section class="panel">
-      <h2>Manage Menu Items</h2>
-      <div id="menu-category-sections" class="menu-category-sections"></div>
+      <h2>Menu Management</h2>
+      <div class="menu-view-tabs" role="tablist" aria-label="Menu views">
+        <button id="structured-view-tab" class="menu-view-tab active" type="button" data-menu-view="structured" role="tab" aria-selected="true">Menu Management</button>
+        <button id="fallback-view-tab" class="menu-view-tab" type="button" data-menu-view="fallback" role="tab" aria-selected="false">Manage Menu Items (Fallback)</button>
+      </div>
+
+      <div id="menu-structured-panel" class="menu-view-panel" role="tabpanel" aria-labelledby="structured-view-tab">
+        <div id="category-grid" class="category-grid"></div>
+        <section id="active-category-items-wrap" class="category-items-wrap hidden" aria-live="polite">
+          <h3 id="active-category-items-title" class="category-title"></h3>
+          <div id="active-category-items" class="category-items"></div>
+        </section>
+      </div>
+
+      <div id="menu-fallback-panel" class="menu-view-panel hidden" role="tabpanel" aria-labelledby="fallback-view-tab">
+        <div id="menu-category-sections" class="menu-category-sections"></div>
+      </div>
+
       <p id="items-message" class="message"></p>
     </section>
   </main>
@@ -68,7 +78,17 @@
       <div id="modal-body" class="modal-body"></div>
     </div>
   </div>
+  <div id="soft-toast" class="soft-toast" aria-live="polite" aria-atomic="true"></div>
+  </div>
 
-  <script src="/menu-management.js?v=20260321b"></script>
+  <script src="/components/layout/Header.js?v=20260321b"></script>
+  <script src="/components/layout/Sidebar.js?v=20260321b"></script>
+  <script src="/components/layout/POSLayout.js?v=20260321b"></script>
+  <script src="/components/layout/AdminLayout.js?v=20260321b"></script>
+  <script src="/components/layout/AppLayoutRouter.js?v=20260321b"></script>
+  <script>
+    window.AppLayoutRouter.mount();
+  </script>
+  <script src="/menu-management.js?v=20260321j"></script>
 </body>
 </html>

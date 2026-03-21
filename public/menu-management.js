@@ -3,6 +3,13 @@ const createForm = document.getElementById("create-menu-form");
 const createMessage = document.getElementById("create-message");
 const itemsMessage = document.getElementById("items-message");
 const categorySectionsEl = document.getElementById("menu-category-sections");
+const categoryGridEl = document.getElementById("category-grid");
+const activeCategoryItemsWrapEl = document.getElementById("active-category-items-wrap");
+const activeCategoryItemsTitleEl = document.getElementById("active-category-items-title");
+const activeCategoryItemsEl = document.getElementById("active-category-items");
+const structuredPanelEl = document.getElementById("menu-structured-panel");
+const fallbackPanelEl = document.getElementById("menu-fallback-panel");
+const viewTabButtons = Array.from(document.querySelectorAll("[data-menu-view]"));
 const modalEl = document.getElementById("menu-item-modal");
 const modalTitleEl = document.getElementById("modal-title");
 const modalBodyEl = document.getElementById("modal-body");
@@ -30,7 +37,28 @@ const CATEGORY_ORDER = [
 ];
 
 const CATEGORY_SET = new Set(CATEGORY_ORDER);
+const ADD_CATEGORY_OPTION_VALUE = "__add_category__";
 let menuItems = [];
+let activeCategory = "";
+let activeView = "structured";
+let appetizerGroupsById = new Map();
+let availableCategories = [...CATEGORY_ORDER];
+let softToastTimer = null;
+let softToastStartedAt = 0;
+let softToastRemainingMs = 0;
+let softToastHideTimer = null;
+let softToastActionHandler = null;
+
+const CATEGORY_ICON_MAP = {
+  Appetizers: "/icons/cbreast.png",
+  Wraps: "/icons/cwrap.png",
+  Wings: "/icons/cwings.png",
+  Sandwiches: "/icons/csub.png",
+  "Hot Dogs": "/icons/chotdog.png",
+  "Full Leg": "/icons/ctangdi.png",
+  Drumsticks: "/icons/cdrumstick.png",
+  Extras: "/icons/dip.png"
+};
 
 function setMessage(target, text = "") {
   if (!target) return;
@@ -42,6 +70,153 @@ function clearMessages() {
   setMessage(itemsMessage, "");
 }
 
+function getSoftToastEl() {
+  let toast = document.getElementById("soft-toast");
+  if (toast) {
+    toast.classList.remove("hidden");
+    if (toast.parentElement !== document.body) {
+      document.body.appendChild(toast);
+    }
+    if (!toast.querySelector(".soft-toast-title")) {
+      toast.innerHTML = "";
+    }
+    return toast;
+  }
+  toast = document.createElement("div");
+  toast.id = "soft-toast";
+  toast.className = "soft-toast";
+  toast.setAttribute("aria-live", "polite");
+  toast.setAttribute("aria-atomic", "true");
+  toast.innerHTML = "";
+  toast.style.display = "none";
+  toast.style.opacity = "0";
+  toast.style.transform = "translateY(8px)";
+  document.body.appendChild(toast);
+  return toast;
+}
+
+function clearSoftToastTimers() {
+  if (softToastTimer) {
+    clearTimeout(softToastTimer);
+    softToastTimer = null;
+  }
+  if (softToastHideTimer) {
+    clearTimeout(softToastHideTimer);
+    softToastHideTimer = null;
+  }
+}
+
+function hideSoftToast() {
+  const softToastEl = getSoftToastEl();
+  clearSoftToastTimers();
+  softToastActionHandler = null;
+  softToastEl.style.opacity = "0";
+  softToastEl.style.transform = "translateY(8px)";
+  softToastHideTimer = setTimeout(() => {
+    softToastEl.style.display = "none";
+    softToastEl.classList.remove("error", "success");
+  }, 220);
+}
+
+function startSoftToastTimer(durationMs = 3600) {
+  clearSoftToastTimers();
+  softToastRemainingMs = Math.max(400, Number(durationMs) || 3600);
+  softToastStartedAt = Date.now();
+  softToastTimer = setTimeout(() => {
+    hideSoftToast();
+  }, softToastRemainingMs);
+}
+
+function pauseSoftToastTimer() {
+  if (!softToastTimer) return;
+  clearTimeout(softToastTimer);
+  softToastTimer = null;
+  const elapsed = Date.now() - softToastStartedAt;
+  softToastRemainingMs = Math.max(250, softToastRemainingMs - elapsed);
+}
+
+function resumeSoftToastTimer() {
+  if (softToastTimer) return;
+  softToastStartedAt = Date.now();
+  softToastTimer = setTimeout(() => {
+    hideSoftToast();
+  }, softToastRemainingMs);
+}
+
+function showSoftToast(input, type = "success") {
+  const normalized =
+    typeof input === "string"
+      ? {
+          type,
+          title: type === "error" ? "Update Failed" : "Saved",
+          message: input
+        }
+      : {
+          type: String(input?.type || "success"),
+          title: String(input?.title || (input?.type === "error" ? "Update Failed" : "Saved")),
+          message: String(input?.message || ""),
+          duration: Number(input?.duration || 0),
+          action: input?.action || null
+        };
+
+  const softToastEl = getSoftToastEl();
+  const iconChar = normalized.type === "error" ? "!" : "&#10003;";
+  const safeTitle = normalized.title.replace(/[<>]/g, "");
+  const safeMessage = normalized.message.replace(/[<>]/g, "");
+  const hasAction = normalized.action && typeof normalized.action.onClick === "function";
+  const actionLabel = hasAction ? String(normalized.action.label || "Undo").replace(/[<>]/g, "") : "";
+  softToastActionHandler = hasAction ? normalized.action.onClick : null;
+
+  softToastEl.classList.remove("error", "success");
+  softToastEl.classList.add(normalized.type === "error" ? "error" : "success");
+  softToastEl.innerHTML = `
+    <span class="soft-toast-icon" aria-hidden="true">${iconChar}</span>
+    <div class="soft-toast-content">
+      <strong class="soft-toast-title">${safeTitle}</strong>
+      <span class="soft-toast-text">${safeMessage}</span>
+    </div>
+    ${
+      hasAction
+        ? `<button type="button" class="soft-toast-action" data-toast-action="primary">${actionLabel}</button>`
+        : ""
+    }
+  `;
+
+  const actionBtn = softToastEl.querySelector("[data-toast-action='primary']");
+  if (actionBtn) {
+    actionBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const action = softToastActionHandler;
+      hideSoftToast();
+      if (typeof action === "function") action();
+    });
+  }
+
+  softToastEl.onmouseenter = pauseSoftToastTimer;
+  softToastEl.onmouseleave = resumeSoftToastTimer;
+  softToastEl.onclick = (event) => {
+    if (event.target?.closest?.("[data-toast-action='primary']")) return;
+    hideSoftToast();
+  };
+
+  softToastEl.style.display = "grid";
+  requestAnimationFrame(() => {
+    softToastEl.style.opacity = "1";
+    softToastEl.style.transform = "translateY(0)";
+  });
+  const duration = normalized.duration > 0 ? normalized.duration : hasAction ? 5000 : 3600;
+  startSoftToastTimer(duration);
+}
+
+function highlightUpdatedCard(cardEl) {
+  if (!cardEl) return;
+  cardEl.classList.remove("item-updated");
+  void cardEl.offsetWidth;
+  cardEl.classList.add("item-updated");
+  setTimeout(() => {
+    cardEl.classList.remove("item-updated");
+  }, 1000);
+}
 async function apiFetch(url, options = {}) {
   const requestOptions = { credentials: "same-origin", ...(options || {}) };
   return fetch(url, requestOptions);
@@ -77,30 +252,62 @@ function boolFlag(value, fallback = false) {
 }
 
 function normalizeCategoryName(category = "") {
-  const raw = String(category || "").trim().toLowerCase();
+  const rawValue = String(category || "").trim().replace(/\s+/g, " ");
+  const raw = rawValue.toLowerCase();
   if (!raw) return "Extras";
   if (raw === "hotdogs") return "Hot Dogs";
+  for (const known of CATEGORY_ORDER) {
+    if (String(known).toLowerCase() === raw) return known;
+  }
   const byTitleCase = raw
     .split(/\s+/)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
-  return CATEGORY_SET.has(byTitleCase) ? byTitleCase : "Extras";
+  return byTitleCase;
+}
+
+function getOrderedAvailableCategories() {
+  const normalized = new Set(
+    (Array.isArray(availableCategories) ? availableCategories : [])
+      .map((category) => normalizeCategoryName(category))
+      .filter(Boolean)
+  );
+  CATEGORY_ORDER.forEach((category) => normalized.add(category));
+  const custom = Array.from(normalized)
+    .filter((category) => !CATEGORY_SET.has(category))
+    .sort((a, b) => a.localeCompare(b));
+  return [...CATEGORY_ORDER, ...custom];
+}
+
+function syncAvailableCategoriesFromItems(items = []) {
+  const merged = new Set(getOrderedAvailableCategories());
+  (Array.isArray(items) ? items : []).forEach((item) => {
+    merged.add(normalizeCategoryName(item?.category || ""));
+  });
+  availableCategories = Array.from(merged);
 }
 
 function getOrderedGroupedItems(items) {
   const grouped = new Map();
-  CATEGORY_ORDER.forEach((category) => grouped.set(category, []));
 
   items.forEach((item) => {
     const category = normalizeCategoryName(item?.category || "");
+    if (!grouped.has(category)) grouped.set(category, []);
     grouped.get(category).push(item);
   });
 
-  CATEGORY_ORDER.forEach((category) => {
-    grouped.get(category).sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+  const orderedCategories = [
+    ...CATEGORY_ORDER.filter((category) => grouped.has(category)),
+    ...Array.from(grouped.keys())
+      .filter((category) => !CATEGORY_SET.has(category))
+      .sort((a, b) => a.localeCompare(b))
+  ];
+
+  orderedCategories.forEach((category) => {
+    (grouped.get(category) || []).sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
   });
 
-  return CATEGORY_ORDER.map((category) => ({
+  return orderedCategories.map((category) => ({
     category,
     items: grouped.get(category) || []
   })).filter((section) => section.items.length > 0);
@@ -160,9 +367,14 @@ function getItemById(itemId) {
   return menuItems.find((entry) => String(entry.id) === id) || null;
 }
 
+function parseAppetizerGroupId(item = {}) {
+  const raw = String(item?.id || "").trim();
+  const match = raw.match(/^a-(\d+)$/i);
+  return match ? Number(match[1]) : null;
+}
+
 function closeAllCardMenus() {
-  if (!categorySectionsEl) return;
-  categorySectionsEl.querySelectorAll(".card-menu").forEach((menu) => {
+  document.querySelectorAll(".card-menu").forEach((menu) => {
     menu.classList.add("hidden");
   });
 }
@@ -192,6 +404,26 @@ function cardTemplate(item) {
     ? `<span class="card-corner-accent card-corner-accent-${accentType}" aria-hidden="true"></span>`
     : "";
 
+  const groupId = parseAppetizerGroupId(item);
+  const variants = Array.isArray(item?.variants) ? item.variants : [];
+  const variantsMarkup = groupId && variants.length > 0
+    ? `
+      <div class="variant-editor" data-group-id="${groupId}">
+        ${variants
+          .map(
+            (variant) => `
+              <div class="variant-row" data-variant-id="${variant.id}">
+                <span class="variant-label">${String(variant.portion || "").trim() || "Variant"}</span>
+                <input class="variant-price-input" type="number" min="0" step="10" value="${Number(variant.price || 0)}" />
+                <button class="variant-save-btn" data-action="save-variant" type="button">Save</button>
+              </div>
+            `
+          )
+          .join("")}
+      </div>
+    `
+    : "";
+
   card.innerHTML = `
     ${cornerAccentMarkup}
     ${isAppetizerGroup ? "" : `
@@ -199,7 +431,6 @@ function cardTemplate(item) {
       <div class="card-menu hidden">
         <button class="card-menu-item" data-action="view-details" type="button">View Details</button>
         <button class="card-menu-item" data-action="edit-item" type="button">Edit Item</button>
-        <button class="card-menu-item" data-action="update-image" type="button">Update Image</button>
         <button class="card-menu-item" data-action="duplicate-item" type="button">Duplicate Item</button>
         <button class="card-menu-item" data-action="delete-item" type="button">Delete Item</button>
       </div>
@@ -225,6 +456,7 @@ function cardTemplate(item) {
         <span>${inStock ? "Available" : "Out of Stock"}</span>
       </label>
     </div>
+    ${variantsMarkup}
   `;
 
   return card;
@@ -249,9 +481,16 @@ function sectionTemplate(category, items) {
 }
 
 function renderItems() {
+  const sections = getOrderedGroupedItems(menuItems);
+  renderFallbackItems(sections);
+  renderCategoryGrid(sections);
+  renderActiveCategoryItems(sections);
+  refreshCategorySelectOptions();
+}
+
+function renderFallbackItems(sections) {
   if (!categorySectionsEl) return;
   categorySectionsEl.innerHTML = "";
-  const sections = getOrderedGroupedItems(menuItems);
   if (sections.length === 0) {
     categorySectionsEl.innerHTML = '<p class="message">No menu items found.</p>';
     return;
@@ -259,6 +498,130 @@ function renderItems() {
   sections.forEach((section) => {
     categorySectionsEl.appendChild(sectionTemplate(section.category, section.items));
   });
+}
+
+function renderCategoryGrid(sections) {
+  if (!categoryGridEl) return;
+  categoryGridEl.innerHTML = "";
+  if (!sections.length) {
+    categoryGridEl.innerHTML = '<p class="message">No categories found.</p>';
+    return;
+  }
+  const markup = sections
+    .map((section) => {
+      const isActive = section.category === activeCategory;
+      const iconSrc = CATEGORY_ICON_MAP[section.category] || "/icons/dip.png";
+      const count = Number(section.items?.length || 0);
+      return `
+        <article class="category-card ${isActive ? "active" : ""}" data-category="${section.category}">
+          <div class="category-card-top">
+            <span class="category-icon" aria-hidden="true">
+              <img src="${iconSrc}" alt="" />
+            </span>
+            <h3 class="category-name">${section.category}</h3>
+          </div>
+          <p class="category-count">${count} ${count === 1 ? "item" : "items"}</p>
+        </article>
+      `;
+    })
+    .join("");
+  categoryGridEl.innerHTML = markup;
+}
+
+function renderActiveCategoryItems(sections) {
+  if (!activeCategoryItemsWrapEl || !activeCategoryItemsTitleEl || !activeCategoryItemsEl) return;
+  const activeSection = sections.find((section) => section.category === activeCategory);
+  if (!activeSection) {
+    activeCategoryItemsWrapEl.classList.add("hidden");
+    activeCategoryItemsTitleEl.textContent = "";
+    activeCategoryItemsEl.innerHTML = "";
+    return;
+  }
+
+  activeCategoryItemsTitleEl.textContent = activeSection.category;
+  activeCategoryItemsEl.innerHTML = "";
+  activeSection.items.forEach((item) => {
+    activeCategoryItemsEl.appendChild(cardTemplate(item));
+  });
+  activeCategoryItemsWrapEl.classList.remove("hidden");
+}
+
+function toggleCategory(category) {
+  const normalized = normalizeCategoryName(category || "");
+  if (activeCategory === normalized) {
+    activeCategory = "";
+  } else {
+    activeCategory = normalized;
+  }
+  renderItems();
+}
+
+function setMenuView(view) {
+  activeView = view === "fallback" ? "fallback" : "structured";
+  viewTabButtons.forEach((button) => {
+    const isActive = button.dataset.menuView === activeView;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-selected", isActive ? "true" : "false");
+  });
+  if (structuredPanelEl) structuredPanelEl.classList.toggle("hidden", activeView !== "structured");
+  if (fallbackPanelEl) fallbackPanelEl.classList.toggle("hidden", activeView !== "fallback");
+}
+
+function buildCategoryOptions(selectedCategory = "Extras", includeAddOption = false) {
+  const normalizedSelected = normalizeCategoryName(selectedCategory);
+  const categories = getOrderedAvailableCategories();
+  const options = categories.map((category) => {
+    const selected = normalizedSelected === category ? "selected" : "";
+    return `<option value="${category}" ${selected}>${category}</option>`;
+  });
+  if (includeAddOption) {
+    options.push(`<option value="${ADD_CATEGORY_OPTION_VALUE}">+ Add Category</option>`);
+  }
+  return options.join("");
+}
+
+function refreshCategorySelectOptions() {
+  if (!createCategorySelect) return;
+  const current = String(createCategorySelect.value || "").trim() || "Appetizers";
+  createCategorySelect.innerHTML = buildCategoryOptions(current, true);
+}
+
+async function ensureCategoryExists(name) {
+  const normalized = normalizeCategoryName(name);
+  if (!normalized) throw new Error("Category name is required.");
+  const payload = await requestJson("/menu/categories", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: normalized })
+  });
+  const savedName = normalizeCategoryName(payload?.name || normalized);
+  availableCategories = Array.from(new Set([...availableCategories, savedName]));
+  refreshCategorySelectOptions();
+  return savedName;
+}
+
+async function handleAddCategorySelection(selectEl) {
+  const rawName = window.prompt("Enter new category name");
+  if (!rawName || !String(rawName).trim()) {
+    selectEl.value = "Extras";
+    return;
+  }
+  try {
+    const savedName = await ensureCategoryExists(rawName);
+    selectEl.value = savedName;
+    showSoftToast({
+      type: "success",
+      title: "Category Added",
+      message: `${savedName} is ready to use`
+    });
+  } catch (error) {
+    selectEl.value = "Extras";
+    showSoftToast({
+      type: "error",
+      title: "Category Add Failed",
+      message: error.message || "Failed to add category. Try again."
+    });
+  }
 }
 
 async function readFileAsDataUrl(file) {
@@ -332,17 +695,39 @@ async function fetchCurrentUser() {
 }
 
 async function fetchItems() {
-  const payload = await requestJson("/menu/manage", { cache: "no-store" });
-  if (!payload) return;
-  menuItems = Array.isArray(payload) ? payload : [];
-  renderItems();
-}
+  try {
+    const categoriesPayload = await requestJson("/menu/categories", { cache: "no-store" });
+    if (Array.isArray(categoriesPayload)) {
+      availableCategories = categoriesPayload
+        .map((entry) => normalizeCategoryName(entry?.name || entry))
+        .filter(Boolean);
+    }
+  } catch (_error) {
+    // Keep working with categories inferred from loaded menu items.
+  }
 
-function buildCategoryOptions(selectedCategory = "Extras") {
-  return CATEGORY_ORDER.map((category) => {
-    const selected = normalizeCategoryName(selectedCategory) === category ? "selected" : "";
-    return `<option value="${category}" ${selected}>${category}</option>`;
-  }).join("");
+  const [itemsPayload, appetizerPayload] = await Promise.all([
+    requestJson("/menu/manage", { cache: "no-store" }),
+    requestJson("/appetizers", { cache: "no-store" })
+  ]);
+  if (!itemsPayload) return;
+  const appetizerGroups = Array.isArray(appetizerPayload) ? appetizerPayload : [];
+  appetizerGroupsById = new Map(
+    appetizerGroups.map((group) => [Number(group.group_id), group])
+  );
+
+  const rawItems = Array.isArray(itemsPayload) ? itemsPayload : [];
+  menuItems = rawItems.map((item) => {
+    if (String(item?.entity_type || "") !== "appetizer_group") return item;
+    const groupId = parseAppetizerGroupId(item);
+    const group = appetizerGroupsById.get(Number(groupId));
+    return {
+      ...item,
+      variants: Array.isArray(group?.variants) ? group.variants : []
+    };
+  });
+  syncAvailableCategoriesFromItems(menuItems);
+  renderItems();
 }
 
 function openDetailsModal(item) {
@@ -378,7 +763,7 @@ function openEditModal(item, imageOnly = false) {
       <form id="modal-edit-form" class="modal-form" action="javascript:void(0);">
         <input id="modal-name" type="text" value="${String(item.name || "").replaceAll('"', "&quot;")}" required />
         <input id="modal-price" type="number" min="0" step="0.01" value="${Number(item.price || 0)}" required />
-        <select id="modal-category">${buildCategoryOptions(item.category || "Extras")}</select>
+        <select id="modal-category">${buildCategoryOptions(item.category || "Extras", true)}</select>
         <input id="modal-prep-time" type="number" min="0" step="1" value="${Number(item.prep_time_minutes || 0)}" required />
         <textarea id="modal-description" rows="2" placeholder="Description (optional)">${String(item.description || "")}</textarea>
         <input id="modal-image-file" type="file" accept="image/*" />
@@ -399,18 +784,61 @@ function openEditModal(item, imageOnly = false) {
   openModal(imageOnly ? "Update Item Image" : "Edit Item", html);
   modalBodyEl.dataset.itemId = String(item.id);
   modalBodyEl.dataset.mode = imageOnly ? "image" : "edit";
+  if (!imageOnly) {
+    const modalCategorySelect = document.getElementById("modal-category");
+    if (modalCategorySelect) {
+      modalCategorySelect.addEventListener("change", async (event) => {
+        const select = event.target;
+        if (String(select?.value || "") !== ADD_CATEGORY_OPTION_VALUE) return;
+        await handleAddCategorySelection(select);
+      });
+    }
+  }
 }
 
 async function updateAvailability(itemId, inStock) {
+  const target = getItemById(itemId);
+  const previousInStock = boolFlag(target?.in_stock, true);
   const payload = await requestJson(`/menu/${itemId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ in_stock: Boolean(inStock) })
   });
   if (!payload) return;
-  const target = getItemById(itemId);
   if (target) target.in_stock = Boolean(inStock);
   renderItems();
+  showSoftToast({
+    type: "success",
+    title: "Availability Updated",
+    message: `${String(target?.name || "Item")} marked ${Boolean(inStock) ? "Available" : "Out of Stock"}`,
+    duration: 5000,
+    action: {
+      label: "Undo",
+      onClick: async () => {
+        try {
+          await requestJson(`/menu/${itemId}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ in_stock: previousInStock })
+          });
+          await fetchItems();
+          showSoftToast({
+            type: "success",
+            title: "Change Reverted",
+            message: `${String(target?.name || "Item")} restored to ${
+              previousInStock ? "Available" : "Out of Stock"
+            }`
+          });
+        } catch (_undoError) {
+          showSoftToast({
+            type: "error",
+            title: "Undo Failed",
+            message: "Failed to update availability. Try again."
+          });
+        }
+      }
+    }
+  });
 }
 
 async function createItem(event) {
@@ -418,7 +846,11 @@ async function createItem(event) {
   clearMessages();
   const name = String(createNameInput?.value || "").trim();
   const price = Number(createPriceInput?.value || 0);
-  const category = normalizeCategoryName(createCategorySelect?.value || "Extras");
+  let category = normalizeCategoryName(createCategorySelect?.value || "Extras");
+  if (String(createCategorySelect?.value || "") === ADD_CATEGORY_OPTION_VALUE) {
+    await handleAddCategorySelection(createCategorySelect);
+    category = normalizeCategoryName(createCategorySelect?.value || "Extras");
+  }
   const prepTime = Number(createPrepTimeInput?.value || 0);
   const description = String(createDescriptionInput?.value || "").trim();
   const imageFile = createImageInput?.files?.[0] || null;
@@ -450,7 +882,12 @@ async function createItem(event) {
   createForm.reset();
   if (createPrepTimeInput) createPrepTimeInput.value = "10";
   if (createInStockInput) createInStockInput.checked = true;
-  setMessage(createMessage, "Menu item created.");
+  setMessage(createMessage, "");
+  showSoftToast({
+    type: "success",
+    title: "Item Created",
+    message: `${name} added under ${category}`
+  });
   await fetchItems();
 }
 
@@ -473,7 +910,12 @@ async function duplicateItem(item) {
     body: JSON.stringify(payload)
   });
   if (!result) return;
-  setMessage(itemsMessage, "Item duplicated.");
+  setMessage(itemsMessage, "");
+  showSoftToast({
+    type: "success",
+    title: "Item Duplicated",
+    message: `${String(payload.name || "Item")} created`
+  });
   await fetchItems();
 }
 
@@ -481,7 +923,12 @@ async function deleteItem(item) {
   if (!window.confirm(`Delete "${item.name}"?`)) return;
   const result = await requestJson(`/menu/${item.id}`, { method: "DELETE" });
   if (!result) return;
-  setMessage(itemsMessage, "Item deleted.");
+  setMessage(itemsMessage, "");
+  showSoftToast({
+    type: "success",
+    title: "Item Deleted",
+    message: `${String(item.name || "Item")} removed`
+  });
   await fetchItems();
 }
 
@@ -494,10 +941,6 @@ async function handleCardMenuAction(action, item) {
   }
   if (action === "edit-item") {
     openEditModal(item, false);
-    return;
-  }
-  if (action === "update-image") {
-    openEditModal(item, true);
     return;
   }
   if (action === "duplicate-item") {
@@ -543,7 +986,12 @@ async function handleModalSubmit(event) {
       });
       if (!result) return;
       closeModal();
-      setMessage(itemsMessage, "Item image updated.");
+      setMessage(itemsMessage, "");
+      showSoftToast({
+        type: "success",
+        title: "Image Updated",
+        message: `${String(item.name || "Item")} image saved`
+      });
       await fetchItems();
       return;
     }
@@ -573,15 +1021,160 @@ async function handleModalSubmit(event) {
       body: JSON.stringify(payload)
     });
     if (!result) return;
+    const canUndo = !imageFile && !payload.clear_image;
+    const previousSnapshot = {
+      name: String(item.name || ""),
+      price: Number(item.price || 0),
+      category: normalizeCategoryName(item.category || "Extras"),
+      prep_time_minutes: Number(item.prep_time_minutes || 0),
+      description: String(item.description || ""),
+      is_peri_peri: boolFlag(item.is_peri_peri, false),
+      has_cheese: boolFlag(item.has_cheese, false),
+      is_tandoori: boolFlag(item.is_tandoori, false),
+      in_stock: boolFlag(item.in_stock, true)
+    };
     closeModal();
-    setMessage(itemsMessage, "Item updated.");
+    setMessage(itemsMessage, "");
+    const updatedName = String(payload.name || item.name || "Item");
+    const updatedPrice = Number(payload.price || item.price || 0);
+    if (canUndo) {
+      showSoftToast({
+        type: "success",
+        title: "Item Updated",
+        message: `${updatedName} - Rs ${updatedPrice.toFixed(2)}`,
+        duration: 5000,
+        action: {
+          label: "Undo",
+          onClick: async () => {
+            try {
+              await requestJson(`/menu/${item.id}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(previousSnapshot)
+              });
+              await fetchItems();
+              showSoftToast({
+                type: "success",
+                title: "Change Reverted",
+                message: `${previousSnapshot.name} restored`
+              });
+            } catch (_undoError) {
+              showSoftToast({
+                type: "error",
+                title: "Undo Failed",
+                message: "Failed to revert item changes. Try again."
+              });
+            }
+          }
+        }
+      });
+    } else {
+      showSoftToast({
+        type: "success",
+        title: "Item Updated",
+        message: `${updatedName} - Rs ${updatedPrice.toFixed(2)}`
+      });
+    }
     await fetchItems();
   } catch (error) {
     setMessage(itemsMessage, error.message || "Failed to update item.");
+    showSoftToast(error.message || "Update failed", "error");
   }
 }
 
 async function handleGridClick(event) {
+  const variantSaveBtn = event.target.closest("[data-action='save-variant']");
+  if (variantSaveBtn) {
+    const row = variantSaveBtn.closest(".variant-row");
+    const editor = variantSaveBtn.closest(".variant-editor");
+    const card = variantSaveBtn.closest(".menu-item-card");
+    const variantId = Number(row?.dataset.variantId || 0);
+    const groupId = Number(editor?.dataset.groupId || 0);
+    const nextPrice = Number(row?.querySelector(".variant-price-input")?.value || 0);
+    if (!Number.isInteger(variantId) || variantId <= 0 || !Number.isInteger(groupId) || groupId <= 0) return;
+    if (!Number.isFinite(nextPrice) || nextPrice < 0) {
+      setMessage(itemsMessage, "Variant price must be a non-negative number.");
+      return;
+    }
+    const groupItem = getItemById(card?.dataset.id || "");
+    const variants = Array.isArray(groupItem?.variants) ? groupItem.variants : [];
+    const variant = variants.find((entry) => Number(entry?.id) === variantId);
+    const previousPrice = Number(variant?.price || 0);
+    const variantLabel = String(variant?.portion || "").trim() || "Variant";
+    const itemName = String(groupItem?.name || "Menu Item").trim();
+    const applyVariantPrice = async (priceValue) => {
+      const updatePayload = {
+        variants: [
+          {
+            id: variantId,
+            portion_name: String(variant?.portion || "").trim(),
+            price: Number(priceValue),
+            prep_time_minutes: Number(variant?.prep_time_minutes || 0)
+          }
+        ]
+      };
+      await requestJson(`/menu/a-${groupId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updatePayload)
+      });
+    };
+    const payload = {
+      variants: [
+        {
+          id: variantId,
+          portion_name: String(variant?.portion || "").trim(),
+          price: nextPrice,
+          prep_time_minutes: Number(variant?.prep_time_minutes || 0)
+        }
+      ]
+    };
+    try {
+      await requestJson(`/menu/a-${groupId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      setMessage(itemsMessage, "");
+      highlightUpdatedCard(card);
+      showSoftToast({
+        type: "success",
+        title: "Price Updated",
+        message: `${itemName} - ${variantLabel} Rs ${Number(nextPrice).toFixed(2)}`,
+        duration: 5000,
+        action: {
+          label: "Undo",
+          onClick: async () => {
+            try {
+              await applyVariantPrice(previousPrice);
+              await fetchItems();
+              showSoftToast({
+                type: "success",
+                title: "Change Reverted",
+                message: `${itemName} - ${variantLabel} restored to Rs ${Number(previousPrice).toFixed(2)}`
+              });
+            } catch (_undoError) {
+              showSoftToast({
+                type: "error",
+                title: "Undo Failed",
+                message: "Failed to update price. Try again."
+              });
+            }
+          }
+        }
+      });
+      await fetchItems();
+    } catch (error) {
+      setMessage(itemsMessage, error.message || "Failed to update variant.");
+      showSoftToast({
+        type: "error",
+        title: "Update Failed",
+        message: "Failed to update price. Try again."
+      });
+    }
+    return;
+  }
+
   const menuBtn = event.target.closest(".card-menu-btn");
   if (menuBtn) {
     const card = menuBtn.closest(".menu-item-card");
@@ -616,7 +1209,7 @@ async function handleGridChange(event) {
   const itemId = String(toggle.dataset.itemId || "").trim();
   try {
     await updateAvailability(itemId, toggle.checked);
-    setMessage(itemsMessage, `Item marked as ${toggle.checked ? "Available" : "Out of Stock"}.`);
+    setMessage(itemsMessage, "");
   } catch (error) {
     toggle.checked = !toggle.checked;
     setMessage(itemsMessage, error.message || "Failed to update availability.");
@@ -648,11 +1241,45 @@ async function init() {
     });
   }
 
+  if (createCategorySelect) {
+    createCategorySelect.innerHTML = buildCategoryOptions(createCategorySelect.value || "Appetizers", true);
+    createCategorySelect.addEventListener("change", async (event) => {
+      const select = event.target;
+      if (String(select?.value || "") !== ADD_CATEGORY_OPTION_VALUE) return;
+      await handleAddCategorySelection(select);
+    });
+  }
+
+  if (viewTabButtons.length > 0) {
+    viewTabButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        setMenuView(button.dataset.menuView || "structured");
+      });
+    });
+  }
+
+  if (categoryGridEl) {
+    categoryGridEl.addEventListener("click", (event) => {
+      const categoryCard = event.target.closest(".category-card");
+      if (!categoryCard) return;
+      toggleCategory(categoryCard.dataset.category || "");
+    });
+  }
+
   if (categorySectionsEl) {
     categorySectionsEl.addEventListener("click", async (event) => {
       await handleGridClick(event);
     });
     categorySectionsEl.addEventListener("change", async (event) => {
+      await handleGridChange(event);
+    });
+  }
+
+  if (activeCategoryItemsEl) {
+    activeCategoryItemsEl.addEventListener("click", async (event) => {
+      await handleGridClick(event);
+    });
+    activeCategoryItemsEl.addEventListener("change", async (event) => {
       await handleGridChange(event);
     });
   }
@@ -683,9 +1310,12 @@ async function init() {
     }
   });
 
+  setMenuView("structured");
   await fetchItems();
 }
 
 init().catch((error) => {
   setMessage(itemsMessage, error.message || "Failed to load menu management.");
 });
+
+
