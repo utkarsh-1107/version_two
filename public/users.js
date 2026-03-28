@@ -18,17 +18,17 @@ function userRowTemplate(user) {
   const tr = document.createElement("tr");
   tr.dataset.id = String(user.id);
   tr.innerHTML = `
-    <td>${user.id}</td>
-    <td><input type="text" class="name-input" value="${String(user.name || "").replaceAll('"', "&quot;")}" /></td>
-    <td>${user.username || "-"}</td>
-    <td>
+    <td data-label="ID"><span class="cell-label">ID</span><span class="cell-value">${user.id}</span></td>
+    <td data-label="Name"><span class="cell-label">Name</span><input type="text" class="name-input" value="${String(user.name || "").replaceAll('"', "&quot;")}" /></td>
+    <td data-label="Username"><span class="cell-label">Username</span><span class="cell-value">${user.username || "-"}</span></td>
+    <td data-label="Role"><span class="cell-label">Role</span>
       <select class="role-select">
         <option value="user" ${user.role === "user" ? "selected" : ""}>User</option>
         <option value="admin" ${user.role === "admin" ? "selected" : ""}>Admin</option>
       </select>
     </td>
-    <td><input type="password" class="password-input" placeholder="Leave empty to keep" /></td>
-    <td>
+    <td data-label="New Password"><span class="cell-label">New Password</span><input type="password" class="password-input" placeholder="Leave empty to keep" /></td>
+    <td data-label="Actions"><span class="cell-label">Actions</span>
       <div class="row-actions">
         <button class="row-btn save" data-action="save">Save</button>
         <button class="row-btn delete" data-action="delete">Delete</button>

@@ -203,6 +203,12 @@ function todayIN() {
   return toINDateTime().slice(0, 10);
 }
 
+function retentionCutoffIN(days = 7) {
+  const safeDays = Number.isInteger(Number(days)) ? Number(days) : 7;
+  const cutoff = new Date(Date.now() - safeDays * 24 * 60 * 60 * 1000);
+  return toINDateTime(cutoff);
+}
+
 async function hasColumn(tableName, columnName) {
   const columns = await all(`PRAGMA table_info(${tableName})`);
   return columns.some((c) => c.name === columnName);
@@ -231,6 +237,8 @@ async function getOrdersSchemaFlags() {
   const hasCustomerAddress = await hasColumn("orders", "customer_address");
   const hasOrderNotes = await hasColumn("orders", "order_notes");
   const hasCreatedByUserId = await hasColumn("orders", "created_by_user_id");
+  const hasLifecycleStatus = await hasColumn("orders", "lifecycle_status");
+  const hasCompletedAt = await hasColumn("orders", "completed_at");
   return {
     hasItemsJson,
     hasDateKey,
@@ -238,7 +246,9 @@ async function getOrdersSchemaFlags() {
     hasCustomerName,
     hasCustomerAddress,
     hasOrderNotes,
-    hasCreatedByUserId
+    hasCreatedByUserId,
+    hasLifecycleStatus,
+    hasCompletedAt
   };
 }
 
@@ -267,6 +277,22 @@ async function migrateOrdersTable() {
   if (!hasCreatedByUserId) {
     await run("ALTER TABLE orders ADD COLUMN created_by_user_id INTEGER");
   }
+
+  const hasLifecycleStatus = await hasColumn("orders", "lifecycle_status");
+  if (!hasLifecycleStatus) {
+    await run("ALTER TABLE orders ADD COLUMN lifecycle_status TEXT NOT NULL DEFAULT 'active'");
+  }
+
+  const hasCompletedAt = await hasColumn("orders", "completed_at");
+  if (!hasCompletedAt) {
+    await run("ALTER TABLE orders ADD COLUMN completed_at TEXT");
+  }
+
+  await run("UPDATE orders SET status = 'queued' WHERE status = 'preparing'");
+  await run("UPDATE orders SET lifecycle_status = 'completed' WHERE status = 'completed'");
+  await run("UPDATE orders SET lifecycle_status = 'active' WHERE status != 'completed'");
+  await run("UPDATE orders SET completed_at = created_at WHERE status = 'completed' AND (completed_at IS NULL OR TRIM(completed_at) = '')");
+  await run("UPDATE orders SET completed_at = NULL WHERE status != 'completed'");
 }
 
 async function migrateOrderItemsTable() {
@@ -513,7 +539,9 @@ async function initDatabase() {
       customer_address TEXT,
       order_notes TEXT,
       created_by_user_id INTEGER,
-      status TEXT NOT NULL CHECK(status IN ('queued', 'preparing', 'ready', 'completed')),
+      status TEXT NOT NULL CHECK(status IN ('queued', 'ready', 'completed')),
+      lifecycle_status TEXT NOT NULL DEFAULT 'active' CHECK(lifecycle_status IN ('active', 'completed')),
+      completed_at TEXT,
       created_at TEXT NOT NULL,
       FOREIGN KEY(created_by_user_id) REFERENCES users(id)
     )
@@ -1225,7 +1253,7 @@ async function getAppetizers() {
 
 async function fetchOrderRows(includeCompleted = false) {
   let sql = `
-    SELECT id, token_number, total_amount, payment_mode, order_type, customer_name, status, created_at, date(created_at) AS order_date
+    SELECT id, token_number, total_amount, payment_mode, order_type, customer_name, status, lifecycle_status, completed_at, created_at, date(created_at) AS order_date
     , created_by_user_id
     , customer_address, order_notes
     FROM orders
@@ -1302,7 +1330,7 @@ async function getOrders(includeCompleted = false) {
 async function getOrderById(orderId) {
   const row = await get(
     `
-    SELECT id, token_number, total_amount, payment_mode, order_type, customer_name, status, created_at, date(created_at) AS order_date
+    SELECT id, token_number, total_amount, payment_mode, order_type, customer_name, status, lifecycle_status, completed_at, created_at, date(created_at) AS order_date
     , created_by_user_id
     , customer_address, order_notes
     FROM orders
@@ -1462,6 +1490,14 @@ async function createOrder({
       orderColumns.push("created_by_user_id");
       orderValues.push(Number.isInteger(Number(created_by_user_id)) ? Number(created_by_user_id) : null);
     }
+    if (schemaFlags.hasLifecycleStatus) {
+      orderColumns.push("lifecycle_status");
+      orderValues.push("active");
+    }
+    if (schemaFlags.hasCompletedAt) {
+      orderColumns.push("completed_at");
+      orderValues.push(null);
+    }
 
     if (schemaFlags.hasItemsJson) {
       orderColumns.push("items_json");
@@ -1512,6 +1548,8 @@ async function createOrder({
         order_notes: cleanOrderNotes || null,
         created_by_user_id: Number.isInteger(Number(created_by_user_id)) ? Number(created_by_user_id) : null,
         status: "queued",
+        lifecycle_status: "active",
+        completed_at: null,
         created_at: createdAt,
         order_date: createdAt.slice(0, 10)
       }
@@ -1524,15 +1562,22 @@ async function createOrder({
 }
 
 async function updateOrderStatus(orderId, nextStatus) {
-  const valid = ["queued", "preparing", "ready", "completed"];
+  const valid = ["queued", "ready", "completed"];
   if (!valid.includes(nextStatus)) throw new Error("Invalid status.");
 
-  const result = await run("UPDATE orders SET status = ? WHERE id = ?", [nextStatus, orderId]);
+  const lifecycleStatus = nextStatus === "completed" ? "completed" : "active";
+  const completedAt = nextStatus === "completed" ? toINDateTime() : null;
+  const result = await run("UPDATE orders SET status = ?, lifecycle_status = ?, completed_at = ? WHERE id = ?", [
+    nextStatus,
+    lifecycleStatus,
+    completedAt,
+    orderId
+  ]);
   if (result.changes === 0) return null;
 
   const row = await get(
     `
-    SELECT id, token_number, total_amount, payment_mode, order_type, customer_name, customer_address, order_notes, status, created_at, date(created_at) AS order_date, created_by_user_id
+    SELECT id, token_number, total_amount, payment_mode, order_type, customer_name, customer_address, order_notes, status, lifecycle_status, completed_at, created_at, date(created_at) AS order_date, created_by_user_id
     FROM orders
     WHERE id = ?
     `,
@@ -1739,7 +1784,8 @@ async function getDailyCloseReport(dateInput = todayIN()) {
       upi_total: Number(stats.upi_total || 0)
     },
     by_status: statusRows.reduce((acc, row) => {
-      acc[row.status] = Number(row.count || 0);
+      const key = row.status === "preparing" ? "queued" : row.status;
+      acc[key] = Number(acc[key] || 0) + Number(row.count || 0);
       return acc;
     }, {}),
     by_order_type: orderTypeRows.reduce((acc, row) => {
@@ -1766,6 +1812,78 @@ async function getDailyCloseReport(dateInput = todayIN()) {
     },
     generated_at: toINDateTime()
   };
+}
+
+async function getOrderHistory({ date = "", limit = 20, offset = 0, createdByUserId = null } = {}) {
+  const normalizedLimit = Math.min(50, Math.max(20, Number(limit) || 20));
+  const normalizedOffset = Math.max(0, Number(offset) || 0);
+  const normalizedDate = /^\d{4}-\d{2}-\d{2}$/.test(String(date || "").trim()) ? String(date).trim() : "";
+  const cutoff = retentionCutoffIN(7);
+
+  const conditions = ["lifecycle_status = 'completed'", "completed_at IS NOT NULL", "completed_at >= ?"];
+  const params = [cutoff];
+  if (normalizedDate) {
+    conditions.push("date(completed_at) = ?");
+    params.push(normalizedDate);
+  }
+  if (Number.isInteger(Number(createdByUserId)) && Number(createdByUserId) > 0) {
+    conditions.push("created_by_user_id = ?");
+    params.push(Number(createdByUserId));
+  }
+
+  const whereClause = conditions.join(" AND ");
+  const countRow = await get(`SELECT COUNT(*) AS total FROM orders WHERE ${whereClause}`, params);
+  const rows = await all(
+    `
+    SELECT id, token_number, total_amount, payment_mode, order_type, customer_name, customer_address, order_notes, status, lifecycle_status, completed_at, created_at, date(created_at) AS order_date, created_by_user_id
+    FROM orders
+    WHERE ${whereClause}
+    ORDER BY completed_at DESC, id DESC
+    LIMIT ? OFFSET ?
+    `,
+    [...params, normalizedLimit, normalizedOffset]
+  );
+
+  return {
+    total: Number(countRow?.total || 0),
+    limit: normalizedLimit,
+    offset: normalizedOffset,
+    orders: rows
+  };
+}
+
+async function deleteOldOrders(retentionDays = 7) {
+  const cutoff = retentionCutoffIN(retentionDays);
+  await run("BEGIN TRANSACTION");
+  try {
+    await run(
+      `
+      DELETE FROM order_items
+      WHERE order_id IN (
+        SELECT id
+        FROM orders
+        WHERE lifecycle_status = 'completed'
+          AND completed_at IS NOT NULL
+          AND completed_at < ?
+      )
+      `,
+      [cutoff]
+    );
+    const deleted = await run(
+      `
+      DELETE FROM orders
+      WHERE lifecycle_status = 'completed'
+        AND completed_at IS NOT NULL
+        AND completed_at < ?
+      `,
+      [cutoff]
+    );
+    await run("COMMIT");
+    return { deleted_orders: Number(deleted?.changes || 0), cutoff };
+  } catch (error) {
+    await run("ROLLBACK");
+    throw error;
+  }
 }
 
 async function resetDay() {
@@ -1949,6 +2067,7 @@ module.exports = {
   deleteMenuItem,
   getAppetizers,
   getOrders,
+  getOrderHistory,
   getOrderById,
   createOrder,
   editOrder,
@@ -1957,6 +2076,7 @@ module.exports = {
   getDailyCloseReport,
   resetDay,
   deleteOrder,
+  deleteOldOrders,
   ping
 };
 

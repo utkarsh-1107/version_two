@@ -52,7 +52,7 @@
               <textarea id="customer-address" maxlength="255" rows="2" placeholder="Enter address (max 255 chars)"></textarea>
             </div>
             <div class="customer-block customer-block-notes">
-              <h3>Notes For Preparing (Optional)</h3>
+              <h3>Order Notes (Optional)</h3>
               <textarea id="order-notes" maxlength="75" rows="2" placeholder="Eg: less spicy, no onions (max 75 chars)"></textarea>
             </div>
           </div>
@@ -113,10 +113,6 @@
             <div id="queued-list" class="order-list"></div>
           </div>
           <div class="board-column">
-            <h3>Preparing</h3>
-            <div id="preparing-list" class="order-list"></div>
-          </div>
-          <div class="board-column">
             <h3>Ready</h3>
             <div id="ready-list" class="order-list"></div>
           </div>
@@ -135,6 +131,9 @@
 
   <section class="panel admin-tools-panel">
     <h2 class="section-title">Admin Tools</h2>
+    <p>
+      <a class="btn btn-secondary" href="/orders/history">Open Order History</a>
+    </p>
     <div class="invoice-tools">
       <label for="invoice-order-id">Print Invoice by Order ID / Token</label>
       <div class="invoice-tools-row">
@@ -169,6 +168,7 @@
       <h3>Item Preview</h3>
       <p id="food-preview-title" class="food-preview-title"></p>
       <div id="food-preview-variants" class="food-preview-variants"></div>
+      <button id="food-preview-add-btn" class="btn food-preview-add-btn" type="button">Add to Cart</button>
     </div>
   </div>
 

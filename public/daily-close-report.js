@@ -97,8 +97,7 @@ function normalizeReport(raw = {}, selectedDate = "") {
       grand_total: Number(summary.grand_total || 0)
     },
     by_status: {
-      queued: Number(byStatus.queued || 0),
-      preparing: Number(byStatus.preparing || 0),
+      queued: Number(byStatus.queued || 0) + Number(byStatus.preparing || 0),
       ready: Number(byStatus.ready || 0),
       completed: Number(byStatus.completed || 0)
     },
@@ -208,7 +207,7 @@ function renderRecommendations(report) {
   } else {
     suggestions.push("Cash volume is still strong. Keep change-float and shift-close cash checks tight.");
   }
-  if ((report.by_status.queued || 0) + (report.by_status.preparing || 0) > 0) {
+  if ((report.by_status.queued || 0) > 0) {
     suggestions.push("Pending queue exists. Consider adding an extra prep hand during your peak order hour.");
   }
   recommendationListEl.innerHTML = suggestions.map((item) => `<li>${item}</li>`).join("");
@@ -231,11 +230,11 @@ function renderCharts(report) {
   upsertChart("status", statusCanvas, {
     type: "doughnut",
     data: {
-      labels: ["Queued", "Preparing", "Ready", "Completed"],
+      labels: ["Queued", "Ready", "Completed"],
       datasets: [
         {
-          data: [status.queued, status.preparing, status.ready, status.completed],
-          backgroundColor: ["#F59E0B", "#2563EB", "#9333EA", "#16A34A"]
+          data: [status.queued, status.ready, status.completed],
+          backgroundColor: ["#F59E0B", "#9333EA", "#16A34A"]
         }
       ]
     },

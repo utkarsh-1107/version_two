@@ -12,7 +12,6 @@ const orderNotesInput = document.getElementById("order-notes");
 const customerDetailsPanel = document.getElementById("customer-details-panel");
 
 const queuedList = document.getElementById("queued-list");
-const preparingList = document.getElementById("preparing-list");
 const readyList = document.getElementById("ready-list");
 const completedList = document.getElementById("completed-list");
 
@@ -46,6 +45,7 @@ const foodPreviewModal = document.getElementById("food-preview-modal");
 const closeFoodPreviewModalBtn = document.getElementById("close-food-preview-modal");
 const foodPreviewTitleEl = document.getElementById("food-preview-title");
 const foodPreviewVariantsEl = document.getElementById("food-preview-variants");
+const foodPreviewAddBtn = document.getElementById("food-preview-add-btn");
 
 const MAX_QTY_PER_ITEM = 10;
 const MAX_CUSTOMER_NAME_LEN = 75;
@@ -176,6 +176,18 @@ function showMessage(text, type = "success") {
   messageEl.classList.add(type);
 }
 
+function formatCurrencyCompact(value) {
+  return `Rs ${Math.round(Number(value || 0))}`;
+}
+
+function getPreviewPortionTone(portion = "") {
+  const normalized = String(portion || "").trim().toLowerCase();
+  if (normalized === "mini" || normalized === "1 pc" || normalized === "1 pcs") return "mini";
+  if (normalized === "half" || normalized === "2 pc" || normalized === "2 pcs") return "half";
+  if (normalized === "full" || normalized === "3 pc" || normalized === "3 pcs") return "full";
+  return "default";
+}
+
 function isAdminRole() {
   return currentUserRole === "admin";
 }
@@ -282,16 +294,29 @@ function restoreMenuFromCache() {
   return true;
 }
 
+function normalizeOrderStatus(status) {
+  const normalized = String(status || "").trim().toLowerCase();
+  if (normalized === "preparing") return "queued";
+  if (["queued", "ready", "completed"].includes(normalized)) return normalized;
+  return "queued";
+}
+
+function normalizeOrder(order) {
+  if (!order || typeof order !== "object") return order;
+  return {
+    ...order,
+    status: normalizeOrderStatus(order.status)
+  };
+}
+
 function getNextStatus(status) {
-  if (status === "queued") return "preparing";
-  if (status === "preparing") return "ready";
+  if (normalizeOrderStatus(status) === "queued") return "ready";
   if (status === "ready") return "completed";
   return null;
 }
 
 function getNextStatusLabel(status) {
-  if (status === "queued") return "Move to Preparing";
-  if (status === "preparing") return "Move to Ready";
+  if (normalizeOrderStatus(status) === "queued") return "Move to Ready";
   if (status === "ready") return "Mark Completed";
   return "";
 }
@@ -561,6 +586,10 @@ function closeFoodPreviewModal() {
   if (!foodPreviewModal) return;
   currentFoodPreviewVariants = [];
   if (foodPreviewVariantsEl) foodPreviewVariantsEl.innerHTML = "";
+  if (foodPreviewAddBtn) {
+    foodPreviewAddBtn.disabled = false;
+    foodPreviewAddBtn.textContent = "Add to Cart";
+  }
   foodPreviewModal.classList.add("hidden");
   foodPreviewModal.setAttribute("aria-hidden", "true");
 }
@@ -574,9 +603,20 @@ function renderVariantPreviewRows() {
     const variantInStock = isMenuItemInStock(variant.item);
     const row = document.createElement("div");
     row.className = "food-preview-variant-row";
+    row.classList.add(`food-preview-tone-${getPreviewPortionTone(variant.portion)}`);
+    if (!variantInStock) {
+      row.classList.add("is-out-of-stock");
+    }
 
     const meta = document.createElement("div");
     meta.className = "food-preview-variant-meta";
+
+    const head = document.createElement("div");
+    head.className = "food-preview-variant-head";
+
+    const sizeNotation = document.createElement("span");
+    sizeNotation.className = "food-preview-variant-size-note";
+    sizeNotation.textContent = "Size";
 
     const portion = document.createElement("span");
     portion.className = "food-preview-variant-name";
@@ -584,27 +624,27 @@ function renderVariantPreviewRows() {
 
     const price = document.createElement("span");
     price.className = "food-preview-variant-price";
-    price.textContent = variantInStock ? formatCurrency(variant.item.price) : "Out of stock";
+    price.textContent = variantInStock ? formatCurrencyCompact(variant.item.price) : "Out of stock";
 
     const controls = document.createElement("div");
     controls.className = "food-preview-variant-controls";
 
     const minusBtn = document.createElement("button");
     minusBtn.type = "button";
-    minusBtn.className = "food-qty-btn compact";
+    minusBtn.className = "food-qty-btn preview-item";
     minusBtn.textContent = "-";
     minusBtn.setAttribute("aria-label", `Decrease ${variant.item.name}`);
     minusBtn.disabled = !variantInStock;
 
     const qty = document.createElement("span");
-    qty.className = "food-qty-value compact";
+    qty.className = "food-qty-value preview-item";
     qty.dataset.itemId = String(variant.item.id);
     const input = getHiddenInputForItemId(variant.item.id);
     qty.textContent = String(Number(input?.value) || 0);
 
     const plusBtn = document.createElement("button");
     plusBtn.type = "button";
-    plusBtn.className = "food-qty-btn compact";
+    plusBtn.className = "food-qty-btn preview-item";
     plusBtn.textContent = "+";
     plusBtn.setAttribute("aria-label", `Increase ${variant.item.name}`);
     plusBtn.disabled = !variantInStock;
@@ -618,7 +658,9 @@ function renderVariantPreviewRows() {
       });
     }
 
-    meta.appendChild(portion);
+    head.appendChild(sizeNotation);
+    head.appendChild(portion);
+    meta.appendChild(head);
     meta.appendChild(price);
     controls.appendChild(minusBtn);
     controls.appendChild(qty);
@@ -635,6 +677,10 @@ function openVariantPreview(baseName, variants) {
   currentFoodPreviewVariants = variants;
   foodPreviewTitleEl.textContent = baseName;
   renderVariantPreviewRows();
+  if (foodPreviewAddBtn) {
+    foodPreviewAddBtn.textContent = "Add to Cart";
+    foodPreviewAddBtn.disabled = false;
+  }
   foodPreviewModal.classList.remove("hidden");
   foodPreviewModal.setAttribute("aria-hidden", "false");
 }
@@ -1403,12 +1449,10 @@ function renderBoards() {
   const visibleOrders = allOrders.filter(orderMatchesFilters);
   const byTokenAsc = (a, b) => Number(a.token_number) - Number(b.token_number);
   const queued = visibleOrders.filter((order) => order.status === "queued").sort(byTokenAsc);
-  const preparing = visibleOrders.filter((order) => order.status === "preparing").sort(byTokenAsc);
   const ready = visibleOrders.filter((order) => order.status === "ready").sort(byTokenAsc);
   const completed = visibleOrders.filter((order) => order.status === "completed").sort(byTokenAsc);
 
   renderColumn(queuedList, queued);
-  renderColumn(preparingList, preparing);
   renderColumn(readyList, ready);
   renderColumn(completedList, completed);
 
@@ -1427,11 +1471,12 @@ function renderBoards() {
 
 function upsertOrderInState(order) {
   if (!order || !Number.isInteger(Number(order.id))) return;
+  const normalizedOrder = normalizeOrder(order);
   const index = allOrders.findIndex((entry) => Number(entry.id) === Number(order.id));
   if (index >= 0) {
-    allOrders[index] = order;
+    allOrders[index] = normalizedOrder;
   } else {
-    allOrders.push(order);
+    allOrders.push(normalizedOrder);
   }
 }
 
@@ -1459,7 +1504,7 @@ async function fetchMenu() {
 async function fetchOrders(includeCompleted = false) {
   const endpoint = includeCompleted ? "/orders?includeCompleted=true" : "/orders";
   const response = await apiFetch(endpoint, { cache: "no-store" });
-  const fetchedOrders = await readJsonOrThrow(response, "Failed to fetch orders.");
+  const fetchedOrders = (await readJsonOrThrow(response, "Failed to fetch orders.")).map(normalizeOrder);
 
   if (!includeCompleted) {
     // Keep completed orders in memory so "Mark Completed" reflects immediately.
@@ -1481,7 +1526,7 @@ async function fetchOrders(includeCompleted = false) {
       .forEach((order) => {
         const id = Number(order.id);
         if (!fetchedIds.has(id)) {
-          merged.push(order);
+          merged.push(normalizeOrder(order));
         }
       });
     allOrders = merged;
@@ -1858,7 +1903,6 @@ async function init() {
     }
 
     queuedList.addEventListener("click", handleOrderCardAction);
-    preparingList.addEventListener("click", handleOrderCardAction);
     readyList.addEventListener("click", handleOrderCardAction);
     completedList.addEventListener("click", handleOrderCardAction);
 
@@ -1894,6 +1938,12 @@ async function init() {
         if (event.target === foodPreviewModal) {
           closeFoodPreviewModal();
         }
+      });
+    }
+
+    if (foodPreviewAddBtn) {
+      foodPreviewAddBtn.addEventListener("click", () => {
+        closeFoodPreviewModal();
       });
     }
 

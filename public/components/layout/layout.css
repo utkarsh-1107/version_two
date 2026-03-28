@@ -29,12 +29,15 @@
 
 .layout-brand {
   color: #fff;
-  font-size: 40px;
+  font-size: clamp(24px, 3vw, 40px);
   line-height: 1;
   font-weight: 900;
   letter-spacing: 0.01em;
   text-decoration: none;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: min(100%, 72vw);
 }
 
 .layout-header-actions {
@@ -234,9 +237,48 @@
   }
 }
 
+@media (max-width: 1024px) {
+  .admin-layout {
+    display: block;
+  }
+
+  .layout-sidebar {
+    position: static;
+    top: auto;
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    border-right: 0;
+    border-bottom: 1px solid #eee;
+    padding: 8px 10px;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .layout-sidebar-nav {
+    display: flex;
+    gap: 8px;
+    width: max-content;
+  }
+
+  .layout-sidebar-item {
+    min-width: 168px;
+    padding: 10px 12px;
+    justify-content: flex-start;
+    border: 1px solid #f3e1e1;
+    background: #fff;
+  }
+
+  .admin-layout-content {
+    height: auto;
+    overflow: visible;
+  }
+}
+
 @media (max-width: 560px) {
   .layout-brand {
     font-size: 26px;
+    max-width: 66vw;
   }
 
   .layout-user-menu-role {
@@ -266,12 +308,15 @@
   }
 
   .layout-sidebar-nav {
+    width: 100%;
+    display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .layout-sidebar-item {
     padding: 10px;
     justify-content: center;
+    min-width: 0;
   }
 
   .layout-sidebar-label {

@@ -5,6 +5,24 @@ Production-ready food order management app with:
 - SQLite for local development
 - PostgreSQL/Supabase for production (recommended for Vercel)
 
+## Admin Menu Management (Latest)
+
+- Admin page route: `GET /menu` (HTML view), with JSON catalog via `GET /menu?format=json`
+- Category-first management view with expandable category sections
+- Dynamic custom category creation from UI (`+ Add Category` in dropdown)
+- Category APIs:
+  - `GET /menu/categories` (admin)
+  - `POST /menu/categories` (admin) body `{ "name": "Your Category" }`
+- Contextual save toasts with inline card highlight and Undo support:
+  - Variant price updates (appetizer groups)
+  - Item edits (non-image field updates)
+  - Availability toggle updates
+- Card actions simplified:
+  - `View Details`
+  - `Edit Item` (includes image update)
+  - `Duplicate Item`
+  - `Delete Item`
+
 ## Database Mode Selection
 
 The server auto-selects DB mode:

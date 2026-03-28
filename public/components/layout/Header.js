@@ -8,6 +8,7 @@
         </button>
         <div id="user-menu-dropdown" class="layout-user-menu-dropdown hidden" role="menu" aria-hidden="true">
           <a id="manage-menu-link" href="/menu" class="layout-user-menu-item" role="menuitem">Manage Menu</a>
+          <a id="order-history-link" href="/orders/history" class="layout-user-menu-item" role="menuitem">Order History</a>
           <a id="daily-close-report-link" href="/daily-close-report" class="layout-user-menu-item" role="menuitem">Daily Close Report</a>
           <a id="manage-users-link" href="/users" class="layout-user-menu-item" role="menuitem">User Management</a>
           <button id="logout-btn" class="layout-user-menu-item" type="button" role="menuitem">Logout</button>

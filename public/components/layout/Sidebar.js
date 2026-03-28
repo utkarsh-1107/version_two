@@ -2,6 +2,7 @@
   const navItems = [
     { label: "POS", path: "/", icon: "\u{1F6D2}" },
     { label: "Menu Management", path: "/menu", icon: "\u{1F374}" },
+    { label: "Order History", path: "/orders/history", icon: "\u{1F9FE}" },
     { label: "Daily Close Report", path: "/daily-close-report", icon: "\u{1F4CA}" },
     { label: "User Management", path: "/users", icon: "\u{1F465}" }
   ];

@@ -25,6 +25,8 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const IS_VERCEL = Boolean(process.env.VERCEL);
 const READ_ONLY = ["1", "true"].includes(String(process.env.READ_ONLY || "").toLowerCase());
+const ORDER_RETENTION_DAYS = 7;
+const ORDER_RETENTION_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const explicitSkipInit = ["1", "true"].includes(String(process.env.SKIP_DB_INIT || "").toLowerCase());
 // On Vercel+Postgres, cold starts should not run full schema/seed init (can hit statement timeout).
 const SKIP_DB_INIT = explicitSkipInit || (IS_VERCEL && dbClient === "postgres");
@@ -72,6 +74,8 @@ app.use((req, res, next) => {
     req.path === "/menu-management.js" ||
     req.path === "/daily-close-report.css" ||
     req.path === "/daily-close-report.js" ||
+    req.path === "/orders-history.css" ||
+    req.path === "/orders-history.js" ||
     req.path === "/components/layout/layout.css" ||
     req.path === "/components/layout/Header.js" ||
     req.path === "/components/layout/Sidebar.js" ||
@@ -142,6 +146,32 @@ function invalidateRuntimeCache() {
   runtimeCache.statsExpiresAt = 0;
 }
 
+async function runOrderRetentionCleanup(reason = "manual") {
+  try {
+    if (typeof db.deleteOldOrders !== "function") return;
+    const result = await db.deleteOldOrders(ORDER_RETENTION_DAYS);
+    const deletedOrders = Number(result?.deleted_orders || 0);
+    if (deletedOrders > 0) {
+      console.log(`[retention] Deleted ${deletedOrders} completed orders older than ${ORDER_RETENTION_DAYS} days (${reason}).`);
+      broadcastEvent("orders_changed", { action: "retention_cleanup", deleted_orders: deletedOrders });
+    } else {
+      console.log(`[retention] No completed orders to clean (${reason}).`);
+    }
+  } catch (error) {
+    console.error("[retention] Cleanup failed:", error);
+  }
+}
+
+function scheduleOrderRetentionCleanup() {
+  if (IS_VERCEL) return;
+  setTimeout(() => {
+    runOrderRetentionCleanup("startup");
+  }, 5000);
+  setInterval(() => {
+    runOrderRetentionCleanup("scheduled");
+  }, ORDER_RETENTION_INTERVAL_MS);
+}
+
 function runPublicAssetAudit() {
   const requiredAssets = [
     "index.html",
@@ -157,6 +187,9 @@ function runPublicAssetAudit() {
     "users.js",
     "daily-close-report.css",
     "daily-close-report.js",
+    "orders-history.html",
+    "orders-history.css",
+    "orders-history.js",
     "components/layout/layout.css",
     "components/layout/Header.js",
     "components/layout/Sidebar.js",
@@ -327,19 +360,18 @@ function renderDailyClosePdf(doc, report) {
   doc
     .lineWidth(1)
     .strokeColor("#E6A2A2")
-    .roundedRect(margin, y, blockWidth, 92, 6)
+    .roundedRect(margin, y, blockWidth, 76, 6)
     .stroke();
   doc.fillColor("#D32F2F").font("Helvetica-Bold").fontSize(11).text("By Status", margin + 10, y + 10);
   doc.fillColor("#333333").font("Helvetica").fontSize(10);
   doc.text(`Queued: ${status.queued || 0}`, margin + 10, y + 30);
-  doc.text(`Preparing: ${status.preparing || 0}`, margin + 10, y + 46);
-  doc.text(`Ready: ${status.ready || 0}`, margin + 10, y + 62);
-  doc.text(`Completed: ${status.completed || 0}`, margin + 10, y + 78);
+  doc.text(`Ready: ${status.ready || 0}`, margin + 10, y + 46);
+  doc.text(`Completed: ${status.completed || 0}`, margin + 10, y + 62);
 
   doc
     .lineWidth(1)
     .strokeColor("#E6A2A2")
-    .roundedRect(middleX, y, blockWidth, 92, 6)
+    .roundedRect(middleX, y, blockWidth, 76, 6)
     .stroke();
   doc.fillColor("#D32F2F").font("Helvetica-Bold").fontSize(11).text("By Order Type", middleX + 10, y + 10);
   doc.fillColor("#333333").font("Helvetica").fontSize(10);
@@ -349,14 +381,14 @@ function renderDailyClosePdf(doc, report) {
   doc
     .lineWidth(1)
     .strokeColor("#E6A2A2")
-    .roundedRect(rightX, y, blockWidth, 92, 6)
+    .roundedRect(rightX, y, blockWidth, 76, 6)
     .stroke();
   doc.fillColor("#D32F2F").font("Helvetica-Bold").fontSize(11).text("Payment Split", rightX + 10, y + 10);
   doc.fillColor("#333333").font("Helvetica").fontSize(10);
   doc.text(`Cash: ${formatInr(payment.cash_total || 0)}`, rightX + 10, y + 36);
   doc.text(`UPI: ${formatInr(payment.upi_total || 0)}`, rightX + 10, y + 56);
 
-  y += 110;
+  y += 94;
   drawSectionTitle(doc, "Item Consumption (Plates)", margin, y, contentWidth);
   y += 36;
 
@@ -601,6 +633,52 @@ app.get("/daily-close-report", async (req, res) => {
   return res.sendFile(path.join(__dirname, "public", "daily-close-report.html"));
 });
 
+app.get("/orders/history", async (req, res) => {
+  try {
+    if (!(await ensureDatabaseReady(res))) return;
+    if (!(await attachRequestUser(req, res))) return;
+    const format = String(req.query.format || "").trim().toLowerCase();
+    const acceptHeader = String(req.headers.accept || "").toLowerCase();
+    const wantsJson =
+      format === "json" ||
+      (acceptHeader.includes("application/json") && !acceptHeader.includes("text/html"));
+
+    if (!wantsJson) {
+      res.setHeader("Cache-Control", "no-store");
+      return res.sendFile(path.join(__dirname, "public", "orders-history.html"));
+    }
+
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const requestedLimit = Number(req.query.limit) || 20;
+    const limit = Math.min(50, Math.max(20, requestedLimit));
+    const offset = (page - 1) * limit;
+    const date = String(req.query.date || "").trim();
+    const createdByUserId = req.user.role === "admin" ? null : req.user.id;
+
+    const payload = await db.getOrderHistory({
+      date,
+      limit,
+      offset,
+      createdByUserId
+    });
+    const orders = Array.isArray(payload?.orders) ? payload.orders.map(decorateOrder) : [];
+    const total = Number(payload?.total || 0);
+    const resolvedLimit = Number(payload?.limit || limit);
+    res.setHeader("Cache-Control", "no-store");
+    return res.json({
+      page,
+      limit: resolvedLimit,
+      offset: Number(payload?.offset || offset),
+      total,
+      total_pages: Math.max(1, Math.ceil(total / resolvedLimit)),
+      orders
+    });
+  } catch (error) {
+    console.error("GET /orders/history failed:", error);
+    return res.status(500).json({ error: "Failed to fetch order history." });
+  }
+});
+
 function formatOrderCode(order) {
   const token = Number(order?.token_number);
   if (!Number.isInteger(token) || token <= 0) return "";
@@ -639,6 +717,10 @@ function parseInvoiceReference(rawRef) {
 
 function renderInvoiceHtml(order, { includePrintButton = true } = {}) {
   const items = Array.isArray(order.items) ? order.items : [];
+  const customerName = String(order.customer_name || "").trim();
+  const customerAddress = String(order.customer_address || "").trim();
+  const orderNotes = String(order.order_notes || "").trim();
+  const hasCustomerMeta = Boolean(customerName || customerAddress || orderNotes);
   const rows = items
     .map((item) => {
       const quantity = Number(item.quantity || 0);
@@ -671,6 +753,19 @@ function renderInvoiceHtml(order, { includePrintButton = true } = {}) {
           <p><strong>Date:</strong> ${escapeHtml(formatInvoiceDate(order.created_at))}</p>
         </div>
       </header>
+
+      ${
+        hasCustomerMeta
+          ? `
+      <section class="invoice-customer">
+        <h2>Customer Details</h2>
+        ${customerName ? `<p><strong>Name:</strong> ${escapeHtml(customerName)}</p>` : ""}
+        ${customerAddress ? `<p><strong>Address:</strong> ${escapeHtml(customerAddress)}</p>` : ""}
+        ${orderNotes ? `<p><strong>Notes:</strong> ${escapeHtml(orderNotes)}</p>` : ""}
+      </section>
+      `
+          : ""
+      }
 
       <table class="invoice-table">
         <colgroup>
@@ -781,6 +876,26 @@ function renderInvoiceDocument(content, { title = "Invoice", autoPrint = false }
           color: #fff;
         }
         .meta p { margin: 3px 0; font-size: 13px; text-align: right; }
+        .invoice-customer {
+          margin: 12px 20px 0;
+          padding: 12px 14px;
+          border: 1px solid var(--line);
+          border-radius: 8px;
+          background: #FFF8F8;
+        }
+        .invoice-customer h2 {
+          margin: 0 0 8px;
+          font-size: 13px;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          color: var(--primary-dark);
+        }
+        .invoice-customer p {
+          margin: 4px 0 0;
+          font-size: 13px;
+          line-height: 1.45;
+          word-break: break-word;
+        }
         .invoice-table {
           width: calc(100% - 40px);
           margin: 12px 20px 8px;
@@ -1390,6 +1505,41 @@ app.get("/orders", async (req, res) => {
   }
 });
 
+app.get("/orders/history/list", async (req, res) => {
+  try {
+    if (!(await ensureDatabaseReady(res))) return;
+    if (!(await attachRequestUser(req, res))) return;
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const requestedLimit = Number(req.query.limit) || 20;
+    const limit = Math.min(50, Math.max(20, requestedLimit));
+    const offset = (page - 1) * limit;
+    const date = String(req.query.date || "").trim();
+    const createdByUserId = req.user.role === "admin" ? null : req.user.id;
+
+    const payload = await db.getOrderHistory({
+      date,
+      limit,
+      offset,
+      createdByUserId
+    });
+    const orders = Array.isArray(payload?.orders) ? payload.orders.map(decorateOrder) : [];
+    const total = Number(payload?.total || 0);
+    const resolvedLimit = Number(payload?.limit || limit);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      page,
+      limit: resolvedLimit,
+      offset: Number(payload?.offset || offset),
+      total,
+      total_pages: Math.max(1, Math.ceil(total / resolvedLimit)),
+      orders
+    });
+  } catch (error) {
+    console.error("GET /orders/history/list failed:", error);
+    res.status(500).json({ error: "Failed to fetch order history." });
+  }
+});
+
 app.get("/orders/:id", async (req, res) => {
   try {
     if (!(await ensureDatabaseReady(res))) return;
@@ -1629,6 +1779,28 @@ app.get("/invoices/:id/print", async (req, res) => {
   }
 });
 
+app.post("/orders/:id/print", async (req, res) => {
+  try {
+    if (!(await ensureDatabaseReady(res))) return;
+    if (!(await attachRequestUser(req, res))) return;
+    const orderId = Number(req.params.id);
+    if (!Number.isInteger(orderId) || orderId <= 0) {
+      return res.status(400).json({ error: "Invalid order id." });
+    }
+    const order = await db.getOrderById(orderId);
+    if (!order) {
+      return res.status(404).json({ error: "Order not found." });
+    }
+    if (!canAccessOrder(req.user, order)) {
+      return res.status(403).json({ error: "Access denied." });
+    }
+    return res.json({ print_url: `/invoices/${orderId}/print` });
+  } catch (error) {
+    console.error("POST /orders/:id/print failed:", error);
+    return res.status(500).json({ error: "Failed to prepare invoice print." });
+  }
+});
+
 app.post("/reset-day", async (req, res) => {
   try {
     if (!(await ensureDatabaseReady(res))) return;
@@ -1652,6 +1824,7 @@ if (!IS_VERCEL) {
       if (initError) {
         process.exit(1);
       }
+      scheduleOrderRetentionCleanup();
       app.listen(PORT, () => {
         console.log(`Food order system running at http://localhost:${PORT}`);
       });
